@@ -1,3 +1,0 @@
-python3 example_experiment.py
- sudo pkill -f torcs
-source venv/bin/activate
