@@ -1,0 +1,10 @@
+# Środowisko wirtualne Pythona
+venv/
+
+# Pliki tymczasowe Pythona
+__pycache__/
+*.pyc
+
+# Folder z kodem C++, który jest pobierany, a nie tworzony przez nas
+gym-torcs/
+python_code/
