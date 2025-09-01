@@ -242,23 +242,25 @@ class TorcsEnv:
     def make_observaton(self, raw_obs):
         if self.vision is False:
             names = ['focus',
-                     'speedX', 'speedY', 'speedZ',
+                     'speedX', 'speedY', 'speedZ', 'angle', 'trackPos',
                      'opponents',
                      'rpm',
                      'track',
                      'wheelSpinVel']
             Observation = col.namedtuple('Observaion', names)
-            return Observation(focus=np.array(raw_obs['focus'], dtype=np.float32)/200.,
-                               speedX=np.array(raw_obs['speedX'], dtype=np.float32)/self.default_speed,
-                               speedY=np.array(raw_obs['speedY'], dtype=np.float32)/self.default_speed,
-                               speedZ=np.array(raw_obs['speedZ'], dtype=np.float32)/self.default_speed,
-                               opponents=np.array(raw_obs['opponents'], dtype=np.float32)/200.,
+            return Observation(focus=np.array(raw_obs['focus'], dtype=np.float32) / 200.,
+                               speedX=np.array(raw_obs['speedX'], dtype=np.float32) / self.default_speed,
+                               speedY=np.array(raw_obs['speedY'], dtype=np.float32) / self.default_speed,
+                               speedZ=np.array(raw_obs['speedZ'], dtype=np.float32) / self.default_speed,
+                               angle=np.array(raw_obs['angle'], dtype=np.float32),  # <-- DODANE
+                               trackPos=np.array(raw_obs['trackPos'], dtype=np.float32),  # <-- DODANE
+                               opponents=np.array(raw_obs['opponents'], dtype=np.float32) / 200.,
                                rpm=np.array(raw_obs['rpm'], dtype=np.float32),
-                               track=np.array(raw_obs['track'], dtype=np.float32)/200.,
+                               track=np.array(raw_obs['track'], dtype=np.float32) / 200.,
                                wheelSpinVel=np.array(raw_obs['wheelSpinVel'], dtype=np.float32))
         else:
             names = ['focus',
-                     'speedX', 'speedY', 'speedZ',
+                     'speedX', 'speedY', 'speedZ', 'angle', 'trackPos',
                      'opponents',
                      'rpm',
                      'track',
@@ -269,12 +271,13 @@ class TorcsEnv:
             # Get RGB from observation
             image_rgb = self.obs_vision_to_image_rgb(raw_obs[names[8]])
 
-            return Observation(focus=np.array(raw_obs['focus'], dtype=np.float32)/200.,
-                               speedX=np.array(raw_obs['speedX'], dtype=np.float32)/self.default_speed,
-                               speedY=np.array(raw_obs['speedY'], dtype=np.float32)/self.default_speed,
-                               speedZ=np.array(raw_obs['speedZ'], dtype=np.float32)/self.default_speed,
-                               opponents=np.array(raw_obs['opponents'], dtype=np.float32)/200.,
+            return Observation(focus=np.array(raw_obs['focus'], dtype=np.float32) / 200.,
+                               speedX=np.array(raw_obs['speedX'], dtype=np.float32) / self.default_speed,
+                               speedY=np.array(raw_obs['speedY'], dtype=np.float32) / self.default_speed,
+                               speedZ=np.array(raw_obs['speedZ'], dtype=np.float32) / self.default_speed,
+                               angle=np.array(raw_obs['angle'], dtype=np.float32),  # <-- DODANE
+                               trackPos=np.array(raw_obs['trackPos'], dtype=np.float32),  # <-- DODANE
+                               opponents=np.array(raw_obs['opponents'], dtype=np.float32) / 200.,
                                rpm=np.array(raw_obs['rpm'], dtype=np.float32),
-                               track=np.array(raw_obs['track'], dtype=np.float32)/200.,
-                               wheelSpinVel=np.array(raw_obs['wheelSpinVel'], dtype=np.float32),
-                               img=image_rgb)
+                               track=np.array(raw_obs['track'], dtype=np.float32) / 200.,
+                               wheelSpinVel=np.array(raw_obs['wheelSpinVel'], dtype=np.float32))
