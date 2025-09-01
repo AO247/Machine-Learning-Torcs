@@ -9,7 +9,7 @@ import torch
 from torch import nn
 import yaml
 
-from experience_replay import ReplayMemory
+from experience_replay import ReplayMemory, NStepReplayMemory
 from dqn import DQN
 
 from datetime import datetime, timedelta
@@ -58,6 +58,8 @@ class Agent():
         self.env_make_params    = hyperparameters.get('env_make_params',{}) # Get optional environment-specific parameters, default to empty dict
         self.enable_double_dqn  = hyperparameters['enable_double_dqn']      # double dqn on/off flag
         self.enable_dueling_dqn = hyperparameters['enable_dueling_dqn']     # dueling dqn on/off flag
+        self.enable_n_step = hyperparameters.get('enable_n_step', False)    # n-step larning on/off flag
+        self.n_step = hyperparameters.get('n_step', 3)                      # how many n-steps
 
         # Neural Network
         self.loss_fn = nn.MSELoss()          # NN Loss function. MSE=Mean Squared Error can be swapped to something else.
@@ -99,7 +101,10 @@ class Agent():
             epsilon = self.epsilon_init
 
             # Initialize replay memory
-            memory = ReplayMemory(self.replay_memory_size)
+            if self.enable_n_step:
+                memory = NStepReplayMemory(self.replay_memory_size, n_step=self.n_step, gamma=self.discount_factor_g)
+            else:
+                memory = ReplayMemory(self.replay_memory_size)
 
             # Create the target network and make it identical to the policy network
             target_dqn = DQN(num_states, num_actions, self.fc1_nodes, self.enable_dueling_dqn).to(device)
@@ -249,14 +254,16 @@ class Agent():
         terminations = torch.tensor(terminations).float().to(device)
 
         with torch.no_grad():
+
+            gamma = self.discount_factor_g ** self.n_step if self.enable_n_step else self.discount_factor_g
+
             if self.enable_double_dqn:
                 best_actions_from_policy = policy_dqn(new_states).argmax(dim=1)
-
-                target_q = rewards + (1-terminations) * self.discount_factor_g * \
-                                target_dqn(new_states).gather(dim=1, index=best_actions_from_policy.unsqueeze(dim=1)).squeeze()
+                target_q = rewards + (1 - terminations) * gamma * \
+                           target_dqn(new_states).gather(dim=1,
+                                                         index=best_actions_from_policy.unsqueeze(dim=1)).squeeze()
             else:
-                # Calculate target Q values (expected returns)
-                target_q = rewards + (1-terminations) * self.discount_factor_g * target_dqn(new_states).max(dim=1)[0]
+                target_q = rewards + (1 - terminations) * gamma * target_dqn(new_states).max(dim=1)[0]
                 '''
                     target_dqn(new_states)  ==> tensor([[1,2,3],[4,5,6]])
                         .max(dim=1)         ==> torch.return_types.max(values=tensor([3,6]), indices=tensor([3, 0, 0, 1]))

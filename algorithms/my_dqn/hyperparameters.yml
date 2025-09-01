@@ -12,6 +12,8 @@ cartpole1:
   fc1_nodes: 128
   enable_double_dqn: False
   enable_dueling_dqn: True
+  enable_n_step: True
+  n_step: 3
 
 
 flappybird1:
@@ -30,3 +32,5 @@ flappybird1:
     use_lidar: False
   enable_double_dqn: True
   enable_dueling_dqn: True
+  enable_n_step: True
+  n_step: 3
