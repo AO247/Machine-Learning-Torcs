@@ -248,4 +248,3 @@ class TanhGaussianDistParams(GaussianDist):
         log_prob = log_prob.sum(-1, keepdim=True)
 
         return action, log_prob, z, mu, std, hx, cx
-

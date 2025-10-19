@@ -5,6 +5,7 @@
     <attstr name="name" val="AI Race"/>
     <attstr name="description" val="A race for our AI agent"/>
   </section>
+
   <section name="Tracks">
     <attnum name="maximum number" val="1"/>
     <section name="1">
@@ -12,19 +13,46 @@
       <attstr name="category" val="road"/>
     </section>
   </section>
+
   <section name="Races">
     <section name="1">
       <attstr name="name" val="Quick Race"/>
     </section>
   </section>
+
   <section name="Quick Race">
     <attstr name="type" val="race"/>
     <attnum name="laps" val="10"/>
   </section>
+
   <section name="Drivers">
-    <attnum name="maximum number" val="1"/>
+    <!-- ZMIENIONO: Zwiększono liczbę kierowców z 1 do 5 -->
+    <attnum name="maximum number" val="5"/>
+
+    <!-- Kierowca 1: Twój agent AI -->
     <section name="1">
       <attstr name="module" val="scr_server"/>
     </section>
+
+    <!-- DODANO: Kierowca 2 (bot TORCS) -->
+    <section name="2">
+      <attstr name="module" val="berni"/>
+    </section>
+
+    <!-- DODANO: Kierowca 3 (bot TORCS) -->
+    <section name="3">
+      <attstr name="module" val="damned"/>
+    </section>
+
+    <!-- DODANO: Kierowca 4 (bot TORCS) -->
+    <section name="4">
+      <attstr name="module" val="olethros"/>
+    </section>
+
+    <!-- DODANO: Kierowca 5 (bot TORCS) -->
+    <section name="5">
+      <attstr name="module" val="bt"/>
+    </section>
+
   </section>
 </params>

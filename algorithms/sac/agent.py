@@ -357,7 +357,7 @@ class SACAgent(Agent):
         # pre-training if needed
         self.pretrain()
 
-        for self.i_episode in range(self.args.start_episode, self.args.episode_num + 1):
+        for self.i_episode in range(1, self.args.episode_num + 1):
             is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
             state = self.env.reset(relaunch=is_relaunch, render=False, sampletrack=True)
 
@@ -549,103 +549,154 @@ class SACAgentLSTM(AgentLSTM):
         self.memory.add(*transition)
 
     def update_model(self) -> Tuple[torch.Tensor, ...]:
-        """Train the model after each episode."""
+        """Stable update_model: Q -> V -> Actor order, no_grad for targets,
+        fresh forward for actor, gradient clipping to avoid in-place/instability issues."""
         self.update_step += 1
 
         batch_size, step_size = self.hyper_params["BATCH_SIZE"], self.hyper_params["STEP_SIZE"]
+        grad_clip = float(self.hyper_params.get("GRADIENT_CLIP", 1.0))
 
-        hx, cx = self.actor.init_lstm_states(batch_size)
+        # helper: compute L2 norm of grads for debugging if needed
+        def grad_norm_of(module):
+            total = 0.0
+            found = False
+            for p in module.parameters():
+                if p.grad is not None:
+                    found = True
+                    total += p.grad.data.norm(2).item() ** 2
+            return (total ** 0.5) if found else 0.0
 
+        # 1) sample experiences
         experiences = self.memory.sample()
         states, actions, rewards, next_states, dones = experiences
-        new_actions, log_prob, pre_tanh_value, mu, std, _, _ = self.actor(states, batch_size, step_size, hx, cx)
 
-        # train alpha
+        # 2) actor outputs for alpha calculation: do under no_grad to avoid tying actor graph
+        with torch.no_grad():
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            new_actions_det, log_prob_det, pre_tanh_det, mu_det, std_det, _, _ = self.actor(
+                states, batch_size, step_size, hx, cx
+            )
+
+        # 3) alpha (entropy) update using detached log_prob
         if self.hyper_params["AUTO_ENTROPY_TUNING"]:
-            alpha_loss = (
-                -self.log_alpha * (log_prob + self.target_entropy).detach()
-            ).mean()
-
+            # use detached log_prob to avoid backprop into actor
+            alpha_loss = (-self.log_alpha * (log_prob_det.detach() + self.target_entropy)).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
+            # no in-place operations on log_alpha; just step
             self.alpha_optimizer.step()
-
-            alpha = self.log_alpha.exp()
+            alpha = self.log_alpha.exp().detach()
         else:
-            alpha_loss = torch.zeros(1)
-            alpha = self.hyper_params["W_ENTROPY"]
+            alpha_loss = torch.zeros(1, device=next(self.actor.parameters()).device)
+            alpha = torch.tensor(self.hyper_params["W_ENTROPY"], device=next(self.actor.parameters()).device)
 
-        # Q function loss
-        masks = 1 - dones
+        # 4) Q targets (v_target computed under no_grad)
+        masks = (1.0 - dones).contiguous()
+        with torch.no_grad():
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            v_target_next, _, _ = self.vf_target(next_states, batch_size, step_size, hx, cx)
+
+        # defensive contiguous/view
+        q_target = rewards.contiguous().view(batch_size, step_size, 1) + \
+                   self.hyper_params["GAMMA"] * v_target_next * masks.contiguous().view(batch_size, step_size, 1)
+
+        # 5) Q predictions (requires grad)
         hx, cx = self.actor.init_lstm_states(batch_size)
         q_1_pred, _, _ = self.qf_1(states, actions, batch_size, step_size, hx, cx)
         hx, cx = self.actor.init_lstm_states(batch_size)
         q_2_pred, _, _ = self.qf_2(states, actions, batch_size, step_size, hx, cx)
-        hx, cx = self.actor.init_lstm_states(batch_size)
-        v_target, _, _ = self.vf_target(next_states, batch_size, step_size, hx, cx)
-        q_target = rewards.view(batch_size, step_size, 1) + self.hyper_params["GAMMA"] * v_target * masks.view(batch_size, step_size, 1)
+
         qf_1_loss = F.mse_loss(q_1_pred, q_target.detach())
         qf_2_loss = F.mse_loss(q_2_pred, q_target.detach())
 
-        # V function loss
-        hx, cx = self.actor.init_lstm_states(batch_size)
-        v_pred, _, _ = self.vf(states, batch_size, step_size, hx, cx)
-        hx, cx = self.actor.init_lstm_states(batch_size)
-        qf_1_pred, _, _ = self.qf_1(states, new_actions, batch_size, step_size, hx, cx)
-        hx, cx = self.actor.init_lstm_states(batch_size)
-        qf_2_pred, _, _ = self.qf_2(states, new_actions, batch_size, step_size, hx, cx)
-        q_pred = torch.min(qf_1_pred, qf_2_pred)
-
-        v_target = q_pred - alpha * log_prob
-        vf_loss = F.mse_loss(v_pred, v_target.detach())
-
-        # train Q functions
+        # 6) Update Q networks first (zero_grad -> backward -> clip -> step)
+        # qf1
         self.qf_1_optimizer.zero_grad()
         qf_1_loss.backward()
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.qf_1.parameters(), grad_clip)
+        q1_gradnorm = grad_norm_of(self.qf_1)
         self.qf_1_optimizer.step()
 
+        # qf2
         self.qf_2_optimizer.zero_grad()
         qf_2_loss.backward()
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.qf_2.parameters(), grad_clip)
+        q2_gradnorm = grad_norm_of(self.qf_2)
         self.qf_2_optimizer.step()
 
-        # train V function
+        # 7) V-function target uses q(s, pi(s)) but should be computed without building a big graph.
+        #    So compute q(s, pi(s)) under no_grad, then compute vf_loss (v_pred vs detached v_target)
+        hx, cx = self.actor.init_lstm_states(batch_size)
+        v_pred, _, _ = self.vf(states, batch_size, step_size, hx, cx)
+
+        with torch.no_grad():
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            new_actions_for_v, log_prob_for_v, _, _, _, _, _ = self.actor(states, batch_size, step_size, hx, cx)
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            qf_1_for_v, _, _ = self.qf_1(states, new_actions_for_v, batch_size, step_size, hx, cx)
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            qf_2_for_v, _, _ = self.qf_2(states, new_actions_for_v, batch_size, step_size, hx, cx)
+            q_for_v = torch.min(qf_1_for_v, qf_2_for_v)
+            v_target = q_for_v - alpha * log_prob_for_v
+
+        vf_loss = F.mse_loss(v_pred, v_target.detach())
+
+        # 8) Update vf
         self.vf_optimizer.zero_grad()
         vf_loss.backward()
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.vf.parameters(), grad_clip)
+        vf_gradnorm = grad_norm_of(self.vf)
         self.vf_optimizer.step()
 
+        # 9) Actor update: do a fresh forward (with grad) and recompute Q on new actions (with current Q weights).
+        actor_loss = torch.zeros(1, device=next(self.actor.parameters()).device)
         if self.update_step % self.hyper_params["POLICY_UPDATE_FREQ"] == 0:
-            # actor loss
-            advantage = q_pred - v_pred.detach()
-            actor_loss = (alpha * log_prob - advantage).mean()
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            new_actions_actor, log_prob_actor, pre_tanh_actor, mu_actor, std_actor, _, _ = self.actor(
+                states, batch_size, step_size, hx, cx
+            )
 
-            # regularization
-            if not self.is_discrete:  # iff the action is continuous
-                mean_reg = self.hyper_params["W_MEAN_REG"] * mu.pow(2).mean()
-                std_reg = self.hyper_params["W_STD_REG"] * std.pow(2).mean()
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            q1_pi, _, _ = self.qf_1(states, new_actions_actor, batch_size, step_size, hx, cx)
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            q2_pi, _, _ = self.qf_2(states, new_actions_actor, batch_size, step_size, hx, cx)
+            q_pi = torch.min(q1_pi, q2_pi)
+
+            # baseline v (detach)
+            hx, cx = self.actor.init_lstm_states(batch_size)
+            v_baseline, _, _ = self.vf(states, batch_size, step_size, hx, cx)
+            v_baseline = v_baseline.detach()
+
+            advantage = q_pi - v_baseline
+            actor_loss = (alpha * log_prob_actor - advantage).mean()
+
+            if not self.is_discrete:
+                mean_reg = self.hyper_params["W_MEAN_REG"] * mu_actor.pow(2).mean()
+                std_reg = self.hyper_params["W_STD_REG"] * std_actor.pow(2).mean()
                 pre_activation_reg = self.hyper_params["W_PRE_ACTIVATION_REG"] * (
-                    pre_tanh_value.pow(2).sum(dim=-1).mean()
-                )
-                actor_reg = mean_reg + std_reg + pre_activation_reg
+                    pre_tanh_actor.pow(2).sum(dim=-1).mean())
+                actor_loss = actor_loss + (mean_reg + std_reg + pre_activation_reg)
 
-                # actor loss + regularization
-                actor_loss += actor_reg
-
-            # train actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), grad_clip)
+            actor_gradnorm = grad_norm_of(self.actor)
             self.actor_optimizer.step()
 
-            # update target networks
+            # soft update target vf after actor step (keeps target consistent)
             common_utils.soft_update(self.vf, self.vf_target, self.hyper_params["TAU"])
-        else:
-            actor_loss = torch.zeros(1)
 
+        # 10) return scalars
         return (
             actor_loss.item(),
             qf_1_loss.item(),
             qf_2_loss.item(),
             vf_loss.item(),
-            alpha_loss.item(),
+            alpha_loss.item() if isinstance(alpha_loss, torch.Tensor) else float(alpha_loss),
         )
 
     def load_params(self, path: str):

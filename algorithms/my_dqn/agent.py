@@ -1,302 +1,201 @@
-import gymnasium as gym
+# algorithms/my_dqn/agent.py
+
 import numpy as np
-
-import matplotlib
-import matplotlib.pyplot as plt
-
-import random
 import torch
 from torch import nn
-import yaml
-
-from experience_replay import ReplayMemory, NStepReplayMemory
-from dqn import DQN
-
-from datetime import datetime, timedelta
-import argparse
-import itertools
-
-import flappy_bird_gymnasium
+from datetime import datetime
 import os
+import time
 
-# For printing date and time
-DATE_FORMAT = "%m-%d %H:%M:%S"
+# Importujemy komponenty z naszego własnego folderu
+from .experience_replay import ReplayMemory, NStepReplayMemory
+from .dqn import DQN
 
-# Directory for saving run info
-RUNS_DIR = "runs"
-os.makedirs(RUNS_DIR, exist_ok=True)
+# Importujemy klasę bazową od autora
+from algorithms.common.abstract.agent import Agent as BaseAgent
 
-# 'Agg': used to generate plots as images and save them to a file instead of rendering to screen
-matplotlib.use('Agg')
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-device = 'cpu' # force cpu, sometimes GPU not always faster than CPU due to overhead of moving data to GPU
 
-# Deep Q-Learning Agent
-class Agent():
+class MyDQNAgent(BaseAgent):  # <-- Dziedziczymy po klasie bazowej autora!
 
-    def __init__(self, hyperparameter_set):
-        with open('hyperparameters.yml', 'r') as file:
-            all_hyperparameter_sets = yaml.safe_load(file)
-            hyperparameters = all_hyperparameter_sets[hyperparameter_set]
-            # print(hyperparameters)
+    def __init__(self, env, args, hyper_params):
+        super(MyDQNAgent, self).__init__(env, args)  # <-- Wywołujemy konstruktor rodzica
 
-        self.hyperparameter_set = hyperparameter_set
+        self.hyper_params = hyper_params
+        self.args = args
 
-        # Hyperparameters (adjustable)
-        self.env_id             = hyperparameters['env_id']
-        self.learning_rate_a    = hyperparameters['learning_rate_a']        # learning rate (alpha)
-        self.discount_factor_g  = hyperparameters['discount_factor_g']      # discount rate (gamma)
-        self.network_sync_rate  = hyperparameters['network_sync_rate']      # number of steps the agent takes before syncing the policy and target network
-        self.replay_memory_size = hyperparameters['replay_memory_size']     # size of replay memory
-        self.mini_batch_size    = hyperparameters['mini_batch_size']        # size of the training data set sampled from the replay memory
-        self.epsilon_init       = hyperparameters['epsilon_init']           # 1 = 100% random actions
-        self.epsilon_decay      = hyperparameters['epsilon_decay']          # epsilon decay rate
-        self.epsilon_min        = hyperparameters['epsilon_min']            # minimum epsilon value
-        self.stop_on_reward     = hyperparameters['stop_on_reward']         # stop training after reaching this number of rewards
-        self.fc1_nodes          = hyperparameters['fc1_nodes']
-        self.env_make_params    = hyperparameters.get('env_make_params',{}) # Get optional environment-specific parameters, default to empty dict
-        self.enable_double_dqn  = hyperparameters['enable_double_dqn']      # double dqn on/off flag
-        self.enable_dueling_dqn = hyperparameters['enable_dueling_dqn']     # dueling dqn on/off flag
-        self.enable_n_step = hyperparameters.get('enable_n_step', False)    # n-step larning on/off flag
-        self.n_step = hyperparameters.get('n_step', 3)                      # how many n-steps
+        # Tworzymy sieci
+        self.policy_dqn = DQN(self.env.state_dim, self.env.action_dim,
+                              hidden_dim=self.hyper_params['fc1_nodes'],
+                              enable_dueling_dqn=self.hyper_params['enable_dueling_dqn']).to(device)
+        self.target_dqn = DQN(self.env.state_dim, self.env.action_dim,
+                              hidden_dim=self.hyper_params['fc1_nodes'],
+                              enable_dueling_dqn=self.hyper_params['enable_dueling_dqn']).to(device)
+        self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
 
-        # Neural Network
-        self.loss_fn = nn.MSELoss()          # NN Loss function. MSE=Mean Squared Error can be swapped to something else.
-        self.optimizer = None                # NN Optimizer. Initialize later.
+        # Tworzymy optymalizator
+        self.optimizer = torch.optim.Adam(self.policy_dqn.parameters(), lr=self.hyper_params['learning_rate_a'])
+        self.loss_fn = nn.MSELoss()
 
-        # Path to Run info
-        self.LOG_FILE   = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.log')
-        self.MODEL_FILE = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.pt')
-        self.GRAPH_FILE = os.path.join(RUNS_DIR, f'{self.hyperparameter_set}.png')
-
-    def run(self, is_training=True, render=False):
-        if is_training:
-            start_time = datetime.now()
-            last_graph_update_time = start_time
-
-            log_message = f"{start_time.strftime(DATE_FORMAT)}: Training starting..."
-            print(log_message)
-            with open(self.LOG_FILE, 'w') as file:
-                file.write(log_message + '\n')
-
-        # Create instance of the environment.
-        # Use "**self.env_make_params" to pass in environment-specific parameters from hyperparameters.yml.
-        env = gym.make(self.env_id, render_mode='human' if render else None, **self.env_make_params)
-
-        # Number of possible actions
-        num_actions = env.action_space.n
-
-        # Get observation space size
-        num_states = env.observation_space.shape[0] # Expecting type: Box(low, high, (shape0,), float64)
-
-        # List to keep track of rewards collected per episode.
-        rewards_per_episode = []
-
-        # Create policy and target network. Number of nodes in the hidden layer can be adjusted.
-        policy_dqn = DQN(num_states, num_actions, self.fc1_nodes, self.enable_dueling_dqn).to(device)
-
-        if is_training:
-            # Initialize epsilon
-            epsilon = self.epsilon_init
-
-            # Initialize replay memory
-            if self.enable_n_step:
-                memory = NStepReplayMemory(self.replay_memory_size, n_step=self.n_step, gamma=self.discount_factor_g)
-            else:
-                memory = ReplayMemory(self.replay_memory_size)
-
-            # Create the target network and make it identical to the policy network
-            target_dqn = DQN(num_states, num_actions, self.fc1_nodes, self.enable_dueling_dqn).to(device)
-            target_dqn.load_state_dict(policy_dqn.state_dict())
-
-            # Policy network optimizer. "Adam" optimizer can be swapped to something else.
-            self.optimizer = torch.optim.Adam(policy_dqn.parameters(), lr=self.learning_rate_a)
-
-            # List to keep track of epsilon decay
-            epsilon_history = []
-
-            # Track number of steps taken. Used for syncing policy => target network.
-            step_count=0
-
-            # Track best reward
-            best_reward = -9999999
+        # Tworzymy pamięć
+        if self.hyper_params.get('enable_n_step', False):
+            self.memory = NStepReplayMemory(self.hyper_params['replay_memory_size'],
+                                            n_step=self.hyper_params.get('n_step', 3),
+                                            gamma=self.hyper_params['discount_factor_g'],
+                                            device=device)
         else:
-            # Load learned policy
-            policy_dqn.load_state_dict(torch.load(self.MODEL_FILE))
+            self.memory = ReplayMemory(self.hyper_params['replay_memory_size'])
 
-            # switch model to evaluation mode
-            policy_dqn.eval()
+        # Inicjalizacja zmiennych
+        self.epsilon = self.hyper_params['epsilon_init']
+        self.total_step = 0
+        self.episode_step = 0
+        self.i_episode = 0
+        self.curr_state = np.zeros(self.env.state_dim)
 
-        # Train INDEFINITELY, manually stop the run when you are satisfied (or unsatisfied) with the results
-        for episode in itertools.count():
+    def select_action(self, state):
+        if np.random.random() < self.epsilon:
+            return self.env.action_space.sample()
+        else:
+            with torch.no_grad():
+                state_tensor = torch.tensor(state, dtype=torch.float, device=device).unsqueeze(0)
+                action = self.policy_dqn(state_tensor).argmax().item()
+                return action
 
-            state, _ = env.reset()  # Initialize environment. Reset returns (state,info).
-            state = torch.tensor(state, dtype=torch.float, device=device) # Convert state to tensor directly on device
+    def train(self):
+        for self.i_episode in range(self.args.start_episode, self.args.episode_num + 1):
+            is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
+            # W `reset` przekazujemy `render` z argumentów startowych
+            self.curr_state = self.env.reset(relaunch=is_relaunch, render=self.args.render, sampletrack=True)
 
-            terminated = False      # True when agent reaches goal or fails
-            episode_reward = 0.0    # Used to accumulate rewards per episode
+            done = False
+            score = 0
+            self.episode_step = 0
+            losses = []
 
-            # Perform actions until episode terminates or reaches max rewards
-            # (on some envs, it is possible for the agent to train to a point where it NEVER terminates, so stop on reward is necessary)
-            while(not terminated and episode_reward < self.stop_on_reward):
+            while not done:
+                action = self.select_action(self.curr_state)
+                next_state, reward, done, info = self.step(action)
 
-                # Select action based on epsilon-greedy
-                if is_training and random.random() < epsilon:
-                    # select random action
-                    action = env.action_space.sample()
-                    action = torch.tensor(action, dtype=torch.int64, device=device)
-                else:
-                    # select best action
-                    with torch.no_grad():
-                        # state.unsqueeze(dim=0): Pytorch expects a batch layer, so add batch dimension i.e. tensor([1, 2, 3]) unsqueezes to tensor([[1, 2, 3]])
-                        # policy_dqn returns tensor([[1], [2], [3]]), so squeeze it to tensor([1, 2, 3]).
-                        # argmax finds the index of the largest element.
-                        action = policy_dqn(state.unsqueeze(dim=0)).squeeze().argmax()
+                self.curr_state = next_state
+                score += reward
+                self.total_step += 1
+                self.episode_step += 1
 
-                # Execute action. Truncated and info is not used.
-                new_state,reward,terminated,truncated,info = env.step(action.item())
+                if self.total_step > self.hyper_params.get("UPDATE_STARTS_FROM", 1000):
+                    # Używamy TRAIN_FREQ z hiperparametrów
+                    if self.total_step % self.hyper_params.get("TRAIN_FREQ", 1) == 0:
+                        loss = self.update_model()
+                        losses.append(loss)
 
-                # Accumulate rewards
-                episode_reward += reward
+            avg_loss = np.mean(losses, axis=0) if losses else (0, 0)
+            self.write_log(score, avg_loss)
 
-                # Convert new state and reward to tensors on device
-                new_state = torch.tensor(new_state, dtype=torch.float, device=device)
-                reward = torch.tensor(reward, dtype=torch.float, device=device)
+            self.epsilon = max(self.epsilon * self.hyper_params['epsilon_decay'], self.hyper_params['epsilon_min'])
 
-                if is_training:
-                    # Save experience into memory
-                    memory.append((state, action, new_state, reward, terminated))
+            if self.i_episode % self.hyper_params['network_sync_rate'] == 0:
+                self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
+                print("--- Target Network Synced ---")
 
-                    # Increment step counter
-                    step_count+=1
+            if self.i_episode % self.args.save_period == 0:
+                print(f"--- Saving model at episode {self.i_episode} ---")
+                self.save_params(self.i_episode)
+            # -----------------------------------------
 
-                # Move to the next state
-                state = new_state
+        self.env.close()
 
-            # Keep track of the rewards collected per episode.
-            rewards_per_episode.append(episode_reward)
+    def test(self):
+        """Testuje wytrenowanego agenta."""
+        print("--- Rozpoczynam test wytrenowanego agenta ---")
 
-            # Save model when new best reward is obtained.
-            if is_training:
-                if episode_reward > best_reward:
-                    log_message = f"{datetime.now().strftime(DATE_FORMAT)}: New best reward {episode_reward:0.1f} ({(episode_reward-best_reward)/best_reward*100:+.1f}%) at episode {episode}, saving model..."
-                    print(log_message)
-                    with open(self.LOG_FILE, 'a') as file:
-                        file.write(log_message + '\n')
+        # Wczytujemy model z podanej ścieżki
+        if self.args.load_from:
+            self.load_params(self.args.load_from)
 
-                    torch.save(policy_dqn.state_dict(), self.MODEL_FILE)
-                    best_reward = episode_reward
+        for i_episode in range(self.args.interim_test_num):
+            state = self.env.reset(relaunch=True, render=self.args.render, sampletrack=True)
+            done = False
+            score = 0
 
+            while not done:
+                # W trybie testowym ZAWSZE wybieramy najlepszą akcję (bez epsilon)
+                with torch.no_grad():
+                    state_tensor = torch.tensor(state, dtype=torch.float, device=device).unsqueeze(0)
+                    action = self.policy_dqn(state_tensor).argmax().item()
 
-                # Update graph every x seconds
-                current_time = datetime.now()
-                if current_time - last_graph_update_time > timedelta(seconds=10):
-                    self.save_graph(rewards_per_episode, epsilon_history)
-                    last_graph_update_time = current_time
+                next_state, reward, done, info = self.env.step(action)
+                state = next_state
+                score += reward
 
-                # If enough experience has been collected
-                if len(memory)>self.mini_batch_size:
-                    mini_batch = memory.sample(self.mini_batch_size)
-                    self.optimize(mini_batch, policy_dqn, target_dqn)
+            print(f"Test Epizod {i_episode + 1} | Wynik: {score:.2f}")
 
-                    # Decay epsilon
-                    epsilon = max(epsilon * self.epsilon_decay, self.epsilon_min)
-                    epsilon_history.append(epsilon)
+        self.env.close()
+    def step(self, action: int) -> tuple:
+        """Przekazuje akcję do środowiska i zapisuje doświadczenie."""
+        next_state, reward, done, info = self.env.step(action)
 
-                    # Copy policy network to target network after a certain number of steps
-                    if step_count > self.network_sync_rate:
-                        target_dqn.load_state_dict(policy_dqn.state_dict())
-                        step_count=0
+        # Zapis do pamięci
+        self.memory.append((
+            torch.tensor(self.curr_state, dtype=torch.float, device=device),
+            torch.tensor(action, dtype=torch.int64, device=device),
+            torch.tensor(next_state, dtype=torch.float, device=device),
+            torch.tensor(reward, dtype=torch.float, device=device),
+            done
+        ))
 
+        return next_state, reward, done, info
 
-    def save_graph(self, rewards_per_episode, epsilon_history):
-        # Save plots
-        fig = plt.figure(1)
+    def write_log(self, score, avg_loss):
+        """Zapisuje logi po epizodzie."""
+        print(
+            f"Episode {self.i_episode} | Score: {score:.2f} | Loss: {avg_loss[0]:.4f} "
+            f"| Q-Value: {avg_loss[1]:.4f} | Epsilon: {self.epsilon:.3f}"
+        )
 
-        # Plot average rewards (Y-axis) vs episodes (X-axis)
-        mean_rewards = np.zeros(len(rewards_per_episode))
-        for x in range(len(mean_rewards)):
-            mean_rewards[x] = np.mean(rewards_per_episode[max(0, x-99):(x+1)])
-        plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
-        # plt.xlabel('Episodes')
-        plt.ylabel('Mean Rewards')
-        plt.plot(mean_rewards)
+    def load_params(self, path):
+        """Wczytuje parametry modelu."""
+        print(f"Loading model from {path}...")
+        self.policy_dqn.load_state_dict(torch.load(path)["dqn_state_dict"])
+        self.target_dqn.load_state_dict(torch.load(path)["dqn_state_dict"])
+        print("Model loaded successfully.")
 
-        # Plot epsilon decay (Y-axis) vs episodes (X-axis)
-        plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
-        # plt.xlabel('Time Steps')
-        plt.ylabel('Epsilon Decay')
-        plt.plot(epsilon_history)
+    def save_params(self, n_episode):
+        """Zapisuje parametry modelu."""
+        # Używamy metody save_params z klasy bazowej
+        params = {
+            "dqn_state_dict": self.policy_dqn.state_dict(),
+        }
+        super(MyDQNAgent, self).save_params(params, n_episode)
 
-        plt.subplots_adjust(wspace=1.0, hspace=1.0)
-
-        # Save plots
-        fig.savefig(self.GRAPH_FILE)
-        plt.close(fig)
-
-
-    # Optimize policy network
-    def optimize(self, mini_batch, policy_dqn, target_dqn):
-
-        # Transpose the list of experiences and separate each element
+    def update_model(self):
+        mini_batch = self.memory.sample(self.hyper_params['mini_batch_size'])
         states, actions, new_states, rewards, terminations = zip(*mini_batch)
 
-        # Stack tensors to create batch tensors
-        # tensor([[1,2,3]])
         states = torch.stack(states)
-
         actions = torch.stack(actions)
-
         new_states = torch.stack(new_states)
-
         rewards = torch.stack(rewards)
-        terminations = torch.tensor(terminations).float().to(device)
+        terminations = torch.tensor(terminations, dtype=torch.float, device=device)
 
         with torch.no_grad():
+            gamma = self.hyper_params['discount_factor_g'] ** self.hyper_params.get('n_step',
+                                                                                    1) if self.hyper_params.get(
+                'enable_n_step', False) else self.hyper_params['discount_factor_g']
 
-            gamma = self.discount_factor_g ** self.n_step if self.enable_n_step else self.discount_factor_g
-
-            if self.enable_double_dqn:
-                best_actions_from_policy = policy_dqn(new_states).argmax(dim=1)
-                target_q = rewards + (1 - terminations) * gamma * \
-                           target_dqn(new_states).gather(dim=1,
-                                                         index=best_actions_from_policy.unsqueeze(dim=1)).squeeze()
+            if self.hyper_params['enable_double_dqn']:
+                best_actions = self.policy_dqn(new_states).argmax(dim=1)
+                target_q = rewards + (1 - terminations) * gamma * self.target_dqn(new_states).gather(1,
+                                                                                                     best_actions.unsqueeze(
+                                                                                                         1)).squeeze()
             else:
-                target_q = rewards + (1 - terminations) * gamma * target_dqn(new_states).max(dim=1)[0]
-                '''
-                    target_dqn(new_states)  ==> tensor([[1,2,3],[4,5,6]])
-                        .max(dim=1)         ==> torch.return_types.max(values=tensor([3,6]), indices=tensor([3, 0, 0, 1]))
-                            [0]             ==> tensor([3,6])
-                '''
+                target_q = rewards + (1 - terminations) * gamma * self.target_dqn(new_states).max(dim=1)[0]
 
-        # Calcuate Q values from current policy
-        current_q = policy_dqn(states).gather(dim=1, index=actions.unsqueeze(dim=1)).squeeze()
-        '''
-            policy_dqn(states)  ==> tensor([[1,2,3],[4,5,6]])
-                actions.unsqueeze(dim=1)
-                .gather(1, actions.unsqueeze(dim=1))  ==>
-                    .squeeze()                    ==>
-        '''
-
-        # Compute loss
+        current_q = self.policy_dqn(states).gather(1, actions.unsqueeze(1)).squeeze()
         loss = self.loss_fn(current_q, target_q)
 
-        # Optimize the model (backpropagation)
-        self.optimizer.zero_grad()  # Clear gradients
-        loss.backward()             # Compute gradients
-        self.optimizer.step()       # Update network parameters i.e. weights and biases
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
-if __name__ == '__main__':
-    # Parse command line inputs
-    parser = argparse.ArgumentParser(description='Train or test model.')
-    parser.add_argument('hyperparameters', help='')
-    parser.add_argument('--train', help='Training mode', action='store_true')
-    args = parser.parse_args()
-
-    dql = Agent(hyperparameter_set=args.hyperparameters)
-
-    if args.train:
-        dql.run(is_training=True)
-    else:
-        dql.run(is_training=False, render=True)
+        return loss.item(), current_q.mean().item()

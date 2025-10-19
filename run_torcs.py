@@ -1,9 +1,9 @@
 import argparse
 import importlib
-
+import torch
 from env import torcs_envs as torcs
 
-
+# torch.autograd.set_detect_anomaly(True)
 parser = argparse.ArgumentParser(description="TORCS")
 parser.add_argument(
     "--seed", type=int, default=777, help="random seed for reproducibility")
@@ -74,6 +74,13 @@ def main():
                                   track=args.track,
                                   state_filter=state_filter,
                                   action_filter=action_filter)
+    elif args.algo == "my_dqn":
+        env = torcs.DiscretizedEnv(nstack=1,
+                                   reward_type=args.reward_type,
+                                   track=args.track,
+                                   state_filter=state_filter,
+                                   action_filter=None,
+                                   action_count=21)
     else:
         raise Exception("Invalid algorithm!")
 

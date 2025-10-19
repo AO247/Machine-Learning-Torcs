@@ -48,7 +48,7 @@ class TorcsEnv:
 
     initial_reset = True
 
-    def __init__(self, port=3101, path=None, reward_type='original', track='none', client_mode=False, enable_termination=True):
+    def __init__(self, port=3001, path=None, reward_type='original', track='none', client_mode=False, enable_termination=True):
         self.port = port
         self.client_mode = client_mode
         self.initial_run = True
@@ -56,7 +56,7 @@ class TorcsEnv:
         self.reset_counter = 0
         self.reset_torcs()
         self.enable_termination = enable_termination
-        
+
         if path:
             self.tree = ET.parse(path)
             self.root = self.tree.getroot()
@@ -224,6 +224,31 @@ class TorcsEnv:
                 reward += 1
             elif obs['racePos'] < obs_pre['racePos']:
                 reward -= 1
+        elif self.reward_type == 'smooth_driving':
+            # --- Zmienne potrzebne do obliczeń ---
+            Vx = obs['speedX'] / 200
+            angle = obs['angle']
+            trackPos = obs['trackPos']  # Używamy surowej wartości, > 1 oznacza wypadnięcie z toru
+
+            current_steer = u[0]
+            previous_steer = self.last_action[0]
+
+            # 1. Główna nagroda za postęp (Progress Reward)
+            #    Nagradza za prędkość w dobrym kierunku i karze za odległość od środka toru.
+            progress_reward = Vx * (np.cos(angle) - np.abs(trackPos))
+
+            # 2. Kara za gwałtowną zmianę sterowania (Steering Smoothness Penalty)
+            #    KLUCZOWY ELEMENT do zwalczenia slalomu. Karze za "szarpanie" kierownicą.
+            steering_penalty_weight = 0.1  # Ten parametr można dostrajać
+            steering_penalty = steering_penalty_weight * (abs(current_steer - previous_steer))
+
+            # 3. Kara za wypadnięcie z toru (Off-track Penalty)
+            off_track_penalty = 0
+            if np.abs(trackPos) > 1.0:
+                off_track_penalty = 10  # Duża, jednorazowa kara, by agent tego unikał
+
+            # --- Finalna Nagroda ---
+            reward = progress_reward - steering_penalty - off_track_penalty
 
         # collision detection
         if obs['damage'] - obs_pre['damage'] > 0:
@@ -270,7 +295,7 @@ class TorcsEnv:
                 - relaunch: Relaunch the game. Necessary to call with
                     from time to time because of the memory leak
                 sampletrack: Sample a random track and load the game
-                    with it at the relaunch. Relaunch needs to be 
+                    with it at the relaunch. Relaunch needs to be
                     true in order to modify the track!
                 render: Change the mode. If true, game will be launch
                     in "render" mode else with "results only" mode.
@@ -328,11 +353,11 @@ class TorcsEnv:
     def get_obs(self):
         return self.observation
 
-    def reset_torcs(self, port=3101):
+    def reset_torcs(self, port=3001):
         if not self.client_mode:
             os.system('pkill torcs')
             time.sleep(0.5)
-            os.system('torcs -nofuel -nodamage -nolaptime -p 3101 &')
+            os.system('torcs -nofuel -nodamage -nolaptime -p 3001 &')
             time.sleep(0.5)
             os.system('sh autostart.sh')
             time.sleep(0.5)

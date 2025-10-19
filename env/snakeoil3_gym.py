@@ -579,7 +579,7 @@ def drive_example(c):
 
 # ================ MAIN ================
 if __name__ == "__main__":
-    C = Client(p=3101, H='localhost', client_mode=True)
+    C = Client(p=3001, H='localhost', client_mode=True)
     while True:
         C.get_servers_input()
         drive_example(C)

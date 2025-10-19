@@ -1,0 +1,8 @@
+Maksymalny wynik (Max Score): 5722.83
+Odchylenie standardowe (Standard Deviation): 1193.17
+
+Najwyższa średnia prędkość (Max of Avg Speed): 182.99
+Odchylenie standardowe (Std Dev of Avg Speed): 47.21
+
+Najwyższa maksymalna prędkość (Max of Max Speed): 269.94
+Odchylenie standardowe (Std Dev of Max Speed): 47.17
