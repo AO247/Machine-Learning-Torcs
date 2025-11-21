@@ -1,3 +1,6 @@
+= - = - = - = - = - = DQN = - = - = - = - = - =
+
+
 Maksymalny wynik (Max Score): 5722.83
 Odchylenie standardowe (Standard Deviation): 1193.17
 
@@ -6,3 +9,35 @@ Odchylenie standardowe (Std Dev of Avg Speed): 47.21
 
 Najwyższa maksymalna prędkość (Max of Max Speed): 269.94
 Odchylenie standardowe (Std Dev of Max Speed): 47.17
+
+
+= - = - = - = - = - = SAC-LSTM = - = - = - = - = - =
+
+--- Wyniki analizy 'total_score' ---
+Maksymalny wynik (Max Score): 5695.00
+Odchylenie standardowe (Standard Deviation): 1126.64
+
+--- Wyniki analizy dla Max Speed ---
+Najwyższa maksymalna prędkość: 203.40
+Odchylenie standardowe: 70.18
+
+--- Wyniki analizy dla Avg Speed ---
+Najwyższa średnia prędkość: 167.65
+Odchylenie standardowe: 57.55
+
+
+NOWEEEE
+--- Wyniki analizy dla Total Score ---
+Liczba przeanalizowanych epizodów: 3519
+Maksymalny wynik (Max Score): 5813.00
+Odchylenie standardowe (Standard Deviation): 1052.76
+
+--- Wyniki analizy dla Max Speed ---
+Liczba przeanalizowanych epizodów: 3519
+Najwyższa maksymalna prędkość (Max of Max Speed): 230.79
+Odchylenie standardowe (Std Dev of Max Speed): 64.35
+
+--- Wyniki analizy dla Avg Speed ---
+Liczba przeanalizowanych epizodów: 3519
+Najwyższa średnia prędkość (Max of Avg Speed): 180.74
+Odchylenie standardowe (Std Dev of Avg Speed): 56.09

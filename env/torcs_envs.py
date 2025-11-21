@@ -14,7 +14,7 @@ BRAKE = 2
 
 class DefaultEnv(TorcsEnv):
     def __init__(self,
-                 port=3001,
+                 port=3101,
                  nstack=1,
                  reward_type='extra_github',
                  track='none',
@@ -92,7 +92,7 @@ class DefaultEnv(TorcsEnv):
 
 class ContinuousEnv(DefaultEnv):
     def __init__(self,
-                 port=3001,
+                 port=3101,
                  nstack=1,
                  reward_type='extra_github',
                  track='none',
@@ -123,7 +123,7 @@ class ContinuousEnv(DefaultEnv):
 
 class DiscretizedEnv(DefaultEnv):
     def __init__(self,
-                 port=3001,
+                 port=3101,
                  nstack=1,
                  reward_type='extra_github',
                  track='none',

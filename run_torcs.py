@@ -1,6 +1,6 @@
 import argparse
 import importlib
-import torch
+# import torch
 from env import torcs_envs as torcs
 
 # torch.autograd.set_detect_anomaly(True)
@@ -63,7 +63,7 @@ def main():
                                    action_filter=None,
                                    action_count=21)
     elif args.algo == "sac":
-        env = torcs.ContinuousEnv(nstack=4,
+        env = torcs.ContinuousEnv(nstack=1,
                                   reward_type=args.reward_type,
                                   track=args.track,
                                   state_filter=state_filter,
@@ -74,13 +74,6 @@ def main():
                                   track=args.track,
                                   state_filter=state_filter,
                                   action_filter=action_filter)
-    elif args.algo == "my_dqn":
-        env = torcs.DiscretizedEnv(nstack=1,
-                                   reward_type=args.reward_type,
-                                   track=args.track,
-                                   state_filter=state_filter,
-                                   action_filter=None,
-                                   action_count=21)
     else:
         raise Exception("Invalid algorithm!")
 

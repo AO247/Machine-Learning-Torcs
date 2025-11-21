@@ -48,7 +48,7 @@ class TorcsEnv:
 
     initial_reset = True
 
-    def __init__(self, port=3001, path=None, reward_type='original', track='none', client_mode=False, enable_termination=True):
+    def __init__(self, port=3101, path=None, reward_type='original', track='none', client_mode=False, enable_termination=True):
         self.port = port
         self.client_mode = client_mode
         self.initial_run = True
@@ -353,11 +353,11 @@ class TorcsEnv:
     def get_obs(self):
         return self.observation
 
-    def reset_torcs(self, port=3001):
+    def reset_torcs(self, port=3101):
         if not self.client_mode:
             os.system('pkill torcs')
             time.sleep(0.5)
-            os.system('torcs -nofuel -nodamage -nolaptime -p 3001 &')
+            os.system('torcs -nofuel -nodamage -nolaptime -p 3101 &')
             time.sleep(0.5)
             os.system('sh autostart.sh')
             time.sleep(0.5)

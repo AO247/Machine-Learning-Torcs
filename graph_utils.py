@@ -26,7 +26,8 @@ dqn_columns = {
     "avg_speed": 11
 }
 
-sac_columns={"episode":0,"episode_step":1,"total_step":2,"total_score":3,"total_loss":4,"actor_loss":5,"qf_1_loss":6,"qf_2_loss":7,"vf_loss":8,"alpha_loss":9,"track_name":10,"race_position":11,"max_speed":12,"avg_speed":13,"max_rolling_total_score":14}
+# ZMODYFIKOWANO: Usunięto 'max_rolling_total_score', aby pasowało do formatu logów z agent.py
+sac_columns={"episode":0,"episode_step":1,"total_step":2,"total_score":3,"total_loss":4,"actor_loss":5,"qf_1_loss":6,"qf_2_loss":7,"vf_loss":8,"alpha_loss":9,"track_name":10,"race_position":11,"max_speed":12,"avg_speed":13}
 t3d_columns ={"episode":0,"episode_step":1,"total_step":2,"total_score":3,"total_loss":4,"actor:loss":5,"critic1_loss":6,"critic2_loss":7,"track_name":8,"race_position":9,"max_speed":10,"avg_speed":11}
 
 algo_column_list={
@@ -36,6 +37,7 @@ algo_column_list={
     "sac": sac_columns,
     "SAC": sac_columns,
     "SACLSTM": sac_columns,
+    "sac-lstm": sac_columns, # DODANO: Obsługa formatu nazwy pliku 'sac-lstm'
     "t3d": t3d_columns
 }
 
@@ -113,7 +115,7 @@ def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100)
 
 def plot_algo_per_track(files, x_column, y_column,tracks, smooth_factor=100,graph_title=""):
     color_index = 0
-
+    plt.figure()
     # find min_iteration for plots
     # load logs
     all_logs = []
@@ -124,12 +126,12 @@ def plot_algo_per_track(files, x_column, y_column,tracks, smooth_factor=100,grap
     # cut lenght to the min epiosode of logs
     min_iteration = np.min([len(logs) for logs in all_logs])
 
-
     for track in tracks:
-
         for file in files:
             # Find algorithm type
-            algo = file.split("_")[1]
+            # POPRAWKA: Użyj os.path.basename
+            basename = os.path.basename(file)
+            algo = basename.split("_")[1]
             print("algo:" + algo)
 
             # Get column indices
@@ -203,17 +205,18 @@ def read_log_file(filename, x_indice, y_indice):
 
 def read_log_file_to_df(filename):
     # Find algorithm type
-    algo = filename.split("_")[1]
+    # POPRAWKA: Użyj os.path.basename, aby wyodrębnić tylko nazwę pliku
+    basename = os.path.basename(filename)
+    algo = basename.split("_")[1]
 
+    # Reszta funkcji pozostaje bez zmian
     file = open(filename, "r")
-
     columns=algo_column_list[algo].keys()
     column_names= list(columns)
     #read file to dataframe skipping the initial 2 lines
     df=pd.read_csv(file, names=column_names,sep = ';', skiprows=2)
 
     return df
-
 
 def persist_figure(plt,title):
     rnd_filename= ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -272,181 +275,66 @@ def plot_same_algo_different_runs(logfilename_name_pairs, texts=[[""] * 3], smoo
     persist_figure(plt,y_axis_title+"_"+name);
     plt.show()
 
+def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100):
+    color_index = 0
+    plt.figure() # DODANO: Tworzy nową figurę dla każdego wykresu, aby się nie nakładały
 
+    # find min_episode for plots
+    # load logs
+    all_logs = []
+    for logfilename_name in files:
+        logs = read_log_file_to_df(logfilename_name)
+        all_logs.append(logs)
+
+    # cut lenght to the min epiosode of logs
+    min_episode = np.min([len(logs) for logs in all_logs])
+
+    for file in files:
+        # Find algorithm type
+        # POPRAWKA: Poprawne wyodrębnianie nazwy algorytmu ze ścieżki
+        basename = os.path.basename(file)
+        algo = basename.split("_")[1]
+        print("algo:" + algo)
+
+        # Get column indices
+        x_indice = get_column_indice(algo, x_column)
+        y_indice = get_column_indice(algo, y_column)
+        print(
+            "x_column:" + x_column + " indice:" + str(x_indice) + " y_column:" + y_column + " indice:" + str(y_indice))
+
+        # Get column values
+        x_values, y_values = read_log_file(file, x_indice, y_indice)
+
+        # Moving average y_values
+        y_values = smoother(y_values, smooth_factor)
+
+        #Cut exceeding episodes
+        y_values = y_values[:min_episode]
+        x_values = x_values[:len(y_values)] ##smoothing reduces the array length a bit
+
+
+        # Get line color and advance to new color
+        color = get_color(color_index)
+        color_index += 1
+
+        # Plot
+        plt.plot(x_values,y_values, color=color, label=algo)
+
+        plt.xlabel(x_column)
+        plt.ylabel(y_column)
+        plt.title(f"{y_column} vs. {x_column}") # DODANO: Tytuł wykresu
+    plt.legend()
+    plt.grid(True) # DODANO: Siatka dla lepszej czytelności
+    persist_figure(plt, f"{y_column}_vs_{x_column}") # Zapisz figurę
+    plt.show()
+##TESTS
 ##TESTS
 if __name__ == "__main__":
-    log_filenames = ["logs/Torcs_dqn_4b15edf.txt"]
+    # Zmień na plik, który chcesz analizować
+    log_filenames = ["logs/one_car/Torcs_sac-lstm_84389f4_fin.txt"]
 
-    # # Wywołanie funkcji do rysowania wykresu
-    # plot_multi_algo_single_feature(
-    #     log_filenames,
-    #     x_column="episode",
-    #     y_column="max_speed",
-    #     smooth_factor=250  # <-- KLUCZOWY PARAMETR Z ARTYKUŁU!
-    # )
-
-
-    # ##PLOT 1 Loss graphs min,max,mean,std of the runs with smoothing
-    # ## with multiple features ( i.e. Max Speed , Average speed)
-    # plot_texts = [
-    #     [
-    #         "total_step",#x_column_legend
-    #         "total_step",#x_column value
-    #         "total_loss",## y_column value
-    #         "Loss",##y_axis title
-    #     ],
-    # ]
-    # #plot_same_algo_different_runs([("releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log", "SACLSTM")], texts=plot_texts,smooth_factor=20)
-    # #plot_same_algo_different_runs([("releases/Torcs_dqn_a11ccc2.log", "DQN")],texts=plot_texts, smooth_factor=20)
-    # plot_same_algo_different_runs([("logs/Torcs_dqn_4b15edf.txt", "DQN")],texts=plot_texts, smooth_factor=20)
-    #
-    #
-    #
-    #
-    # ##PLOT 2 Multiple runs of same algorithm plots min,max,mean,std of the runs with smoothing
-    # ## with multiple features ( i.e. Max Speed , Average speed)
-    # plot_texts = [
-    #     [
-    #         "Max Speed",#x_column_legend
-    #         "total_step", #x_column value
-    #         "max_speed", ## y_column value
-    #         "speed" ##y_axis title
-    #     ],
-    #     [
-    #         "Average Speed",#x_column_legend
-    #         "total_step",#x_column value
-    #         "avg_speed",## y_column value
-    #         "speed",##y_axis title
-    #
-    #     ]
-    # ]
-    #
-    # #plot_same_algo_different_runs([("releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log", "SACLSTM"), ],texts=plot_texts, smooth_factor=50)
-    # #plot_same_algo_different_runs([("releases/Torcs_dqn_a11ccc2.log", "DQN"), ],texts=plot_texts, smooth_factor=50)
-    # plot_same_algo_different_runs([("logs/Torcs_dqn_4b15edf.txt", "DQN")],texts=plot_texts, smooth_factor=50)
-    #
-    #
-    # ##PLOT 3 - Rewards
-    # ## with multiple features ( i.e. Max Speed , Average speed)
-    # plot_texts = [
-    #     [
-    #         "episode_step",#x_column_legend
-    #         "total_step", #x_column value
-    #         "total_score", ## y_column value
-    #         "Reward" ##y_axis title
-    #     ]
-    # ]
-    #
-    # #plot_same_algo_different_runs([("releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log", "SACLSTM")],texts=plot_texts, smooth_factor=100)
-    # #plot_same_algo_different_runs([("releases/Torcs_dqn_a11ccc2.log", "DQN") ],texts=plot_texts, smooth_factor=200)
-    # plot_same_algo_different_runs([("logs/Torcs_dqn_4b15edf.txt", "DQN")],texts=plot_texts, smooth_factor=200)
-    #
-    # # ##PLOT 3.5 - Max Cumulative Rewards
-    # # ## with multiple features ( i.e. Max Speed , Average speed)
-    # # plot_texts = [
-    # #     [
-    # #         "episode_step",#x_column_legend
-    # #         "total_step", #x_column value
-    # #         "max_rolling_total_score", ## y_column value
-    # #         "Max_Rolling_Reward" ##y_axis title
-    # #     ]
-    # # ]
-    # #
-    # # #plot_same_algo_different_runs([("releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log", "SACLSTM")],texts=plot_texts, smooth_factor=100)
-    # # #plot_same_algo_different_runs([("releases/Torcs_dqn_a11ccc2.log", "DQN") ],texts=plot_texts, smooth_factor=200)
-    # # plot_same_algo_different_runs([("logs/Torcs_dqn_4b15edf.txt", "DQN")],texts=plot_texts, smooth_factor=200)
-    # #
-    #
-    #
-    #
-    # ##PLOT 4 Compare different algos against same feature (i.e. max_reward)
-    # #x_column="episode"
-    # x_column = "total_step"
-    # y_column="total_score"
-    # #log_filenames=["releases/TORCS_SACLSTM_512256128_L1_EP4000_N1_G99_trimmed.log", "releases/Torcs_sac_f622afd.log","releases/Torcs_dqn_a11ccc2.log"]
-    # log_filenames = ["logs/Torcs_dqn_4b15edf.txt", "logs/Torcs_dqn_4b15edf.txt"]
-    #
-    # #plot_multi_algo_single_feature(log_filenames, x_column=x_column, y_column=y_column, smooth_factor=1000)
-    #
-    #
-    # ##PLOT 5 Compare algos against tracks
-    # x_column = "total_step"
-    # y_column="max_speed"
-    # #log_filenames=["releases/TORCS_SAC_N4_G99_2000.log", "releases/TORCS_SACLSTM_512256128_L1_EP2000_N1_G99.log"]
-    # #log_filenames = ["releases/TORCS_SAC_N4_G99_2000_trimmed.log", "releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log"]
-    # log_filenames = ["logs/Torcs_dqn_4b15edf.txt", "logs/Torcs_dqn_4b15edf.txt"]
-    #
-    # tracks_all=['e-track-2','alpine-1','g-track-1']
-    # plot_algo_per_track(log_filenames, tracks=tracks_all, x_column=x_column, y_column=y_column, smooth_factor=10,graph_title="Max Speed per track and algo")
-    #
-    #
-    # ##PLOT 6 Compare algos against tracks
-    # x_column = "total_step"
-    # y_column="total_score"
-    # #log_filenames=["releases/TORCS_SAC_N4_G99_2000.log", "releases/TORCS_SACLSTM_512256128_L1_EP2000_N1_G99.log"]
-    # #log_filenames = ["releases/TORCS_SAC_N4_G99_2000_trimmed.log", "releases/TORCS_SACLSTM_512256128_L1_EP3000_N1_G99_trimmed.log"]
-    # log_filenames = ["logs/Torcs_dqn_4b15edf.txt", "logs/Torcs_dqn_4b15edf.txt"]
-    # tracks_all = ['e-track-2', 'alpine-1', 'g-track-1']
-    # plot_algo_per_track(log_filenames, tracks=tracks_all, x_column=x_column, y_column=y_column, smooth_factor=20,graph_title="Reward per track and algo")
-    #
-    #
-    # Lista do przechowywania wszystkich wyników z plików
+    # --- Analiza dla 'total_score' ---
     all_scores = []
-
-    # Pobieramy indeks kolumny, która nas interesuje
-    score_column_index = dqn_columns["total_score"]
-
-    for log_filename in log_filenames:
-        print(f"--- Analizowanie pliku: {log_filename} ---")
-
-        # Sprawdzamy, czy plik istnieje
-        if not os.path.exists(log_filename):
-            print(f"BŁĄD: Plik {log_filename} nie został znaleziony.")
-            continue  # Przejdź do następnego pliku
-
-        # Otwieramy plik i czytamy go linijka po linijce
-        with open(log_filename, 'r') as file:
-            for line in file:
-                # Dzielimy linijkę po średniku, aby uzyskać poszczególne wartości
-                parts = line.strip().split(';')
-
-                # Używamy bloku try-except, aby zignorować nagłówki i inne nieprawidłowe linie
-                try:
-                    # Sprawdzamy, czy linia ma wystarczająco dużo kolumn
-                    if len(parts) > score_column_index:
-                        # Pobieramy wartość z kolumny "total_score" i konwertujemy ją na liczbę
-                        score = float(parts[score_column_index])
-                        all_scores.append(score)
-                except ValueError:
-                    # Ignorujemy linie, w których nie da się przekonwertować wartości na liczbę
-                    # (np. nagłówki "episode;episode_step;...")
-                    pass
-
-    # Po wczytaniu wszystkich danych, sprawdzamy, czy mamy co analizować
-    if all_scores:
-        # Konwertujemy listę na tablicę NumPy dla łatwych i szybkich obliczeń
-        scores_array = np.array(all_scores)
-
-        # Obliczamy maksymalny wynik
-        max_score = np.max(scores_array)
-
-        # Obliczamy odchylenie standardowe
-        std_dev = np.std(scores_array)
-
-        print("\n--- Wyniki analizy ---")
-        print(f"Liczba przeanalizowanych epizodów: {len(all_scores)}")
-        print(f"Maksymalny wynik (Max Score): {max_score:.2f}")
-        print(f"Odchylenie standardowe (Standard Deviation): {std_dev:.2f}")
-
-    else:
-        print("\nNie znaleziono żadnych danych do analizy w podanych plikach.")
-    all_max_speeds = []
-    all_avg_speeds = []
-
-    # Pobieramy indeksy kolumn, które nas interesują
-    max_speed_column_index = dqn_columns["max_speed"]
-    avg_speed_column_index = dqn_columns["avg_speed"]
-
     for log_filename in log_filenames:
         print(f"--- Analizowanie pliku: {log_filename} ---")
 
@@ -454,24 +342,74 @@ if __name__ == "__main__":
             print(f"BŁĄD: Plik {log_filename} nie został znaleziony.")
             continue
 
+        # POPRAWKA: Użyj os.path.basename, aby wyodrębnić tylko nazwę pliku
+        try:
+            basename = os.path.basename(log_filename) # Pobierz np. "Torcs_sac-lstm_84389f4_fin.txt"
+            algo = basename.split('_')[1]             # Pobierz "sac-lstm"
+            column_dict = algo_column_list[algo]
+            score_column_index = column_dict["total_score"]
+        except (IndexError, KeyError):
+            print(f"BŁĄD: Nie można określić algorytmu lub znaleźć kolumny 'total_score' dla pliku: {log_filename}")
+            continue
+
+        # Pomiń pierwsze dwie linie nagłówka w pliku logów
         with open(log_filename, 'r') as file:
-            for line in file:
+            lines = file.readlines()[2:] # Pomijamy pierwsze dwie linie
+            for line in lines:
                 parts = line.strip().split(';')
-
                 try:
-                    # Sprawdzamy, czy linia ma wystarczająco dużo kolumn
-                    if len(parts) > max(max_speed_column_index, avg_speed_column_index):
-                        # Pobieramy wartości z odpowiednich kolumn i konwertujemy je na liczby
-                        max_speed = float(parts[max_speed_column_index])
-                        avg_speed = float(parts[avg_speed_column_index])
-
-                        all_max_speeds.append(max_speed)
-                        all_avg_speeds.append(avg_speed)
-                except ValueError:
-                    # Ignorujemy linie, których nie da się przekonwertować (nagłówki itp.)
+                    if len(parts) > score_column_index:
+                        score = float(parts[score_column_index])
+                        all_scores.append(score)
+                except (ValueError, IndexError):
+                    # Ignoruj linie, które nie są poprawnymi danymi (np. puste linie lub nagłówki)
                     pass
 
-    # Analiza dla `max_speed`
+    if all_scores:
+        scores_array = np.array(all_scores)
+        max_score = np.max(scores_array)
+        std_dev = np.std(scores_array)
+
+        print("\n--- Wyniki analizy dla Total Score ---")
+        print(f"Liczba przeanalizowanych epizodów: {len(all_scores)}")
+        print(f"Maksymalny wynik (Max Score): {max_score:.2f}")
+        print(f"Odchylenie standardowe (Standard Deviation): {std_dev:.2f}")
+    else:
+        print("\nNie znaleziono żadnych danych 'total_score' do analizy w podanych plikach.")
+
+    # --- Analiza dla prędkości ---
+    all_max_speeds = []
+    all_avg_speeds = []
+    for log_filename in log_filenames:
+        if not os.path.exists(log_filename):
+            continue
+
+        # POPRAWKA: Użyj os.path.basename, aby wyodrębnić tylko nazwę pliku
+        try:
+            basename = os.path.basename(log_filename)
+            algo = basename.split('_')[1]
+            column_dict = algo_column_list[algo]
+            max_speed_column_index = column_dict["max_speed"]
+            avg_speed_column_index = column_dict["avg_speed"]
+        except (IndexError, KeyError):
+            print(f"BŁĄD: Nie można określić algorytmu lub znaleźć kolumn prędkości dla pliku: {log_filename}")
+            continue
+
+        # Pomiń pierwsze dwie linie nagłówka w pliku logów
+        with open(log_filename, 'r') as file:
+            lines = file.readlines()[2:] # Pomijamy pierwsze dwie linie
+            for line in lines:
+                parts = line.strip().split(';')
+                try:
+                    if len(parts) > max(max_speed_column_index, avg_speed_column_index):
+                        max_speed = float(parts[max_speed_column_index])
+                        avg_speed = float(parts[avg_speed_column_index])
+                        all_max_speeds.append(max_speed)
+                        all_avg_speeds.append(avg_speed)
+                except (ValueError, IndexError):
+                     # Ignoruj linie, które nie są poprawnymi danymi
+                    pass
+
     if all_max_speeds:
         max_speeds_array = np.array(all_max_speeds)
         max_of_max_speed = np.max(max_speeds_array)
@@ -484,7 +422,6 @@ if __name__ == "__main__":
     else:
         print("\nNie znaleziono danych dla 'max_speed'.")
 
-    # Analiza dla `avg_speed`
     if all_avg_speeds:
         avg_speeds_array = np.array(all_avg_speeds)
         max_of_avg_speed = np.max(avg_speeds_array)
@@ -497,7 +434,38 @@ if __name__ == "__main__":
     else:
         print("\nNie znaleziono danych dla 'avg_speed'.")
 
+    log_file = ["logs/one_car/Torcs_sac-lstm_84389f4_fin.txt"]
 
+    # Sprawdzenie, czy plik istnieje
+    if not os.path.exists(log_file[0]):
+        print(f"BŁĄD: Plik {log_file[0]} nie został znaleziony.")
+    else:
+        # Ustawiamy większy współczynnik wygładzania
+        WYGLADZANIE = 200  # <-- ZDEFINIOWANA NOWA, WIĘKSZA WARTOŚĆ
 
+        # 1. Wykres: oś y avg_speed, oś x episode
+        print("\n--- Generowanie wykresu: Średnia prędkość od epizodu ---")
+        plot_multi_algo_single_feature(
+            files=log_file,
+            x_column="episode",
+            y_column="avg_speed",
+            smooth_factor=WYGLADZANIE  # Użycie nowej wartości
+        )
 
+        # 2. Wykres: oś y max_speed, oś x episode
+        print("\n--- Generowanie wykresu: Maksymalna prędkość od epizodu ---")
+        plot_multi_algo_single_feature(
+            files=log_file,
+            x_column="episode",
+            y_column="max_speed",
+            smooth_factor=WYGLADZANIE  # Użycie nowej wartości
+        )
 
+        # 3. Wykres: oś y score, oś x episode
+        print("\n--- Generowanie wykresu: Wynik od epizodu ---")
+        plot_multi_algo_single_feature(
+            files=log_file,
+            x_column="episode",
+            y_column="total_score",
+            smooth_factor=WYGLADZANIE  # Użycie nowej wartości
+        )

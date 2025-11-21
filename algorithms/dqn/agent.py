@@ -87,6 +87,7 @@ class DQNAgent(Agent):
         # load the optimizer and model parameters
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
+            print("Loading model: " + args.load_from)
 
         self._initialize()
 
@@ -320,14 +321,9 @@ class DQNAgent(Agent):
         """Train the agent."""
         # logger
         if self.args.log:
-            # Użyj trybu dopisywania ("a") jeśli wznawiamy trening, w przeciwnym razie trybu zapisu ("w")
-            log_mode = "a" if self.args.load_from is not None and os.path.exists(self.log_filename) else "w"
-
-            with open(self.log_filename, log_mode) as file:
-                # Zapisz nagłówek z hiperparametrami tylko jeśli tworzymy nowy plik (tryb "w")
-                if log_mode == "w":
-                    file.write(str(self.args) + "\n")
-                    file.write(str(self.hyper_params) + "\n")
+            with open(self.log_filename, "w") as file:
+                file.write(str(self.args) + "\n")
+                file.write(str(self.hyper_params) + "\n")
 
         # pre-training if needed
         self.pretrain()
@@ -382,8 +378,9 @@ class DQNAgent(Agent):
             t_end = time.time()
             avg_time_cost = (t_end - t_begin) / self.episode_step
 
-            avg_loss = np.vstack(losses).mean(axis=0) if losses else (0, 0)
-            self.write_log(self.i_episode, avg_loss, score, avg_time_cost, speed)
+            if losses:
+                avg_loss = np.vstack(losses).mean(axis=0)
+                self.write_log(self.i_episode, avg_loss, score, avg_time_cost, speed)
 
             if self.i_episode % self.args.save_period == 0:
                 self.save_params(self.i_episode)

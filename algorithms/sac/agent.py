@@ -96,6 +96,7 @@ class SACAgent(Agent):
         # load the optimizer and model parameters
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
+            print("Loading model: " + args.load_from)
 
         self._initialize()
 
@@ -482,6 +483,7 @@ class SACAgentLSTM(AgentLSTM):
         # load the optimizer and model parameters
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
+            print("Loading model: " + args.load_from)
 
         self._initialize()
 
