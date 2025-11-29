@@ -74,6 +74,12 @@ def main():
                                   track=args.track,
                                   state_filter=state_filter,
                                   action_filter=action_filter)
+    elif args.algo == "ppo":
+        env = torcs.ContinuousEnv(nstack=1,
+                                  reward_type=args.reward_type,
+                                  track=args.track,
+                                  state_filter=state_filter,
+                                  action_filter=action_filter)
     else:
         raise Exception("Invalid algorithm!")
 
