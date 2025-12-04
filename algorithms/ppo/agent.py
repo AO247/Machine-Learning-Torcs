@@ -30,7 +30,8 @@ class PPOAgent(Agent):
         self.agent = model
         self.optimizer = optimizer
         self.hyper_params = hyper_params
-
+        self.maxReward = float('-inf')
+        self.minReward = float('inf')
         # Tensorboard writer
         self.writer = SummaryWriter(f"runs/{args.algo}_{args.seed}_{int(time.time())}")
 
@@ -144,7 +145,10 @@ class PPOAgent(Agent):
 
                 # --- SAFETY 4: Krytyczne zabezpieczenie przed zepsuciem modelu ---
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"CRITICAL WARNING: Loss is {loss.item()}! Skipping optimization step to save the model.")
+                    # print(f"CRITICAL WARNING: Loss is {loss.item()}! Skipping optimization step to save the model.")
+                    print(f"CRITICAL WARNING: Loss is {loss.item()}! "
+                          f"Range: [{self.minReward:.4f}, {self.maxReward:.4f}]. "
+                          f"Skipping optimization step to save the model.")
                     continue  # Pomijamy ten krok, nie robimy optimizer.step()!
 
                 self.optimizer.zero_grad()
@@ -209,6 +213,7 @@ class PPOAgent(Agent):
             "total loss: %.3f actor_loss(pg): %.3f qf_1_loss(kl): %.3f qf_2_loss(clip): %.3f "
             "vf_loss: %.3f alpha_loss(ent): %.3f\n"
             "track name: %s, race position: %d, max speed %.2f, avg speed %.2f\n"
+            "maxReward: %.4f, minReward: %.4f\n"
             % (
                 i,
                 self.episode_step,  # Musimy to aktualizować w train()!
@@ -223,7 +228,9 @@ class PPOAgent(Agent):
                 self.env.track_name,
                 self.env.last_obs['racePos'],
                 max_speed,
-                avg_speed
+                avg_speed,
+                self.maxReward,
+                self.minReward
             )
         )
 
@@ -277,14 +284,47 @@ class PPOAgent(Agent):
         }
         super().save_params(params, n_episode)
 
+
     def train(self):
         """Main training loop."""
-        self.total_step = 0
-        self.episode_step = 0
 
-        # Konfiguracja
         num_steps = self.hyper_params["NUM_STEPS"]
         max_episodes = self.args.episode_num
+
+        self.hyper_params["BATCH_SIZE"] = int(num_steps)
+        self.hyper_params["MINIBATCH_SIZE"] = int(
+            self.hyper_params["BATCH_SIZE"] // self.hyper_params["NUM_MINIBATCHES"])
+
+        # 2. INTELIGENTNE WZNOWIENIE (Fix licznika)
+        if self.args.start_episode > 1:
+            file_mode = "a"
+            # Próba odzyskania kroku z pliku logów
+            recovered_step = self._recover_total_step()
+
+            # ZABEZPIECZENIE: Jeśli odzyskany krok to 0 (błąd odczytu),
+            # a wznawiamy trening, to lepiej wziąć ostatnią znaną dobrą wartość ręcznie,
+            # ale pod żadnym pozorem nie używamy mnożenia (start_episode * num_steps)!
+            if recovered_step == 0 and self.args.start_episode > 1:
+                print("[WARNING] Could not recover step from log. Starting counter from 0 (check logs manually!)")
+                self.total_step = 0
+            else:
+                self.total_step = recovered_step
+        else:
+            file_mode = "w"
+            self.total_step = 0
+
+        # 3. Otwarcie pliku
+        if self.args.log:
+            with open(self.log_filename, file_mode) as file:
+                if self.args.start_episode == 1:
+                    file.write(str(self.args) + "\n")
+                    file.write(str(self.hyper_params) + "\n")
+                else:
+                    file.write(
+                        f"\n--- RESUMING TRAINING FROM EPISODE {self.args.start_episode} (Step: {self.total_step}) ---\n")
+
+        self.episode_step = 0
+
 
         self.hyper_params["BATCH_SIZE"] = int(num_steps)
         self.hyper_params["MINIBATCH_SIZE"] = int(
@@ -298,7 +338,7 @@ class PPOAgent(Agent):
         dones = torch.zeros((num_steps)).to(device)
         values = torch.zeros((num_steps)).to(device)
 
-        current_episode = 1
+        current_episode = self.args.start_episode
         last_loss_tuple = None
         global_step = 0
 
@@ -344,6 +384,10 @@ class PPOAgent(Agent):
 
                 # reward = reward / 10.0
                 # reward = np.clip(reward, -20.0, 20.0)
+                if reward > self.maxReward:
+                    self.maxReward = reward
+                if reward < self.minReward:
+                    self.minReward = reward
 
                 rewards[step] = torch.tensor(reward).to(device).view(-1)
                 next_obs = torch.Tensor(next_obs_np).to(device).view(1, -1)
@@ -424,3 +468,35 @@ class PPOAgent(Agent):
         self.env.close()
         self.writer.close()
         self.save_params(current_episode)
+
+    def _recover_total_step(self):
+        """Próbuje odczytać ostatni total_step z pliku logów."""
+        if not os.path.exists(self.log_filename):
+            print("[INFO] Log file not found, starting total_step from 0.")
+            return 0
+
+        try:
+            with open(self.log_filename, "r") as f:
+                lines = f.readlines()
+
+            # Czytamy od tyłu, szukając ostatniej linii z danymi
+            for line in reversed(lines):
+                line = line.strip()
+                # Pomijamy puste linie i linie nagłówkowe (zaczynające się od Namespace, {, ---)
+                if not line or line.startswith("Namespace") or line.startswith("{") or line.startswith(
+                        "---") or line.startswith("[INFO]"):
+                    continue
+
+                # Próbujemy sparsować linię CSV (format: episode;episode_step;total_step;...)
+                parts = line.split(";")
+                if len(parts) > 2:
+                    recovered_step = int(parts[2])  # Trzecia kolumna to total_step
+                    print(f"[INFO] Recovered total_step from logs: {recovered_step}")
+                    return recovered_step
+
+            print("[INFO] No valid data found in logs, starting total_step from 0.")
+            return 0
+
+        except Exception as e:
+            print(f"[WARNING] Failed to recover total_step from logs: {e}. Starting from 0.")
+            return 0

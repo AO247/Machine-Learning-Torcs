@@ -14,7 +14,6 @@ class PPOActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(PPOActorCritic, self).__init__()
 
-        # Zmieniamy 64 na 256
         hidden_size = 256
 
         self.critic = nn.Sequential(
