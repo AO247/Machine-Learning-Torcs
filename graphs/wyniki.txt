@@ -41,3 +41,7 @@ Odchylenie standardowe (Std Dev of Max Speed): 64.35
 Liczba przeanalizowanych epizodów: 3519
 Najwyższa średnia prędkość (Max of Avg Speed): 180.74
 Odchylenie standardowe (Std Dev of Avg Speed): 56.09
+
+
+= - = - = - = - = - = PPO = - = - = - = - = - =
+

@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-
+import torch.nn.functional as F
 from algorithms.common.abstract.agent import Agent
 from env.torcs_envs import DefaultEnv
 
@@ -30,11 +30,9 @@ class PPOAgent(Agent):
         self.agent = model
         self.optimizer = optimizer
         self.hyper_params = hyper_params
-        self.maxReward = float('-inf')
-        self.minReward = float('inf')
         # Tensorboard writer
         self.writer = SummaryWriter(f"runs/{args.algo}_{args.seed}_{int(time.time())}")
-
+        self.ratioNaN = False
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
 
@@ -105,6 +103,16 @@ class PPOAgent(Agent):
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
+
+                ### potencjalna naprawa NaN ###
+                with torch.no_grad():
+                    is_bad = torch.isinf(ratio) | torch.isnan(ratio)
+
+                if is_bad.any():
+                    ratio = torch.where(is_bad, torch.tensor(1.0).to(device), ratio)
+                    self.ratioNaN = True
+                ##########
+
                 with torch.no_grad():
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > self.hyper_params["CLIP_COEF"]).float().mean().item()]
@@ -126,30 +134,52 @@ class PPOAgent(Agent):
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
+                # newvalue = newvalue.view(-1)
+                # if self.hyper_params["CLIP_VLOSS"]:
+                #     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                #     v_clipped = b_values[mb_inds] + torch.clamp(
+                #         newvalue - b_values[mb_inds],
+                #         -self.hyper_params["CLIP_COEF"],
+                #         self.hyper_params["CLIP_COEF"]
+                #     )
+                #     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                #     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                #     v_loss = 0.5 * v_loss_max.mean()
+                # else:
+                #     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+
                 newvalue = newvalue.view(-1)
                 if self.hyper_params["CLIP_VLOSS"]:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                    # Używamy smooth_l1 zamiast potęgi **2
+                    v_loss_unclipped = F.smooth_l1_loss(newvalue, b_returns[mb_inds], reduction='none', beta=1.0)
+
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
                         -self.hyper_params["CLIP_COEF"],
                         self.hyper_params["CLIP_COEF"]
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = F.smooth_l1_loss(v_clipped, b_returns[mb_inds], reduction='none', beta=1.0)
+
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    v_loss = 0.5 * F.smooth_l1_loss(newvalue, b_returns[mb_inds], beta=1.0)
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - self.hyper_params["ENT_COEF"] * entropy_loss + v_loss * self.hyper_params["VF_COEF"]
 
                 # --- SAFETY 4: Krytyczne zabezpieczenie przed zepsuciem modelu ---
                 if torch.isnan(loss) or torch.isinf(loss):
-                    # print(f"CRITICAL WARNING: Loss is {loss.item()}! Skipping optimization step to save the model.")
-                    print(f"CRITICAL WARNING: Loss is {loss.item()}! "
-                          f"Range: [{self.minReward:.4f}, {self.maxReward:.4f}]. "
-                          f"Skipping optimization step to save the model.")
-                    continue  # Pomijamy ten krok, nie robimy optimizer.step()!
+                    print(f"\nCRITICAL WARNING: Loss became {loss.item()}!")
+                    print(
+                        f"DEBUG PARTS -> PG_Loss: {pg_loss.item()}, V_Loss: {v_loss.item()}, Entropy: {entropy_loss.item()}")
+
+                    # Sprawdźmy wejścia
+                    print(f"DEBUG INPUTS -> Max Obs: {mb_obs.max().item()}, Min Obs: {mb_obs.min().item()}")
+                    print(f"DEBUG ADVANTAGES -> Max: {mb_advantages.max().item()}, Min: {mb_advantages.min().item()}")
+
+                    print("Skipping optimization step to save the model.\n")
+                    continue
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -213,7 +243,6 @@ class PPOAgent(Agent):
             "total loss: %.3f actor_loss(pg): %.3f qf_1_loss(kl): %.3f qf_2_loss(clip): %.3f "
             "vf_loss: %.3f alpha_loss(ent): %.3f\n"
             "track name: %s, race position: %d, max speed %.2f, avg speed %.2f\n"
-            "maxReward: %.4f, minReward: %.4f\n"
             % (
                 i,
                 self.episode_step,  # Musimy to aktualizować w train()!
@@ -229,8 +258,6 @@ class PPOAgent(Agent):
                 self.env.last_obs['racePos'],
                 max_speed,
                 avg_speed,
-                self.maxReward,
-                self.minReward
             )
         )
 
@@ -256,6 +283,8 @@ class PPOAgent(Agent):
                         avg_speed
                     )
                 )
+                if(self.ratioNaN):
+                    file.write("Ratio is Nan or INF")
 
         # Opcjonalnie: Zapis do Tensorboarda (już z poprawnymi nazwami PPO)
         if loss is not None:
@@ -353,6 +382,20 @@ class PPOAgent(Agent):
 
         while current_episode <= max_episodes:
 
+            ### zmieniajszenie na sztywno entropy ###
+            with torch.no_grad():
+                # Pobieramy obecny log_std (odchylenie standardowe w skali logarytmicznej)
+                current_log_std = self.agent.actor_logstd.data
+
+                # Zmniejszamy go o małą wartość (np. 0.001 co epizod)
+                # Ale nie pozwalamy spaść poniżej -3.0 (to już bardzo sztywna jazda)
+                decay_rate = 0.005
+                new_log_std = torch.clamp(current_log_std - decay_rate, min=-3.0)
+
+                # Przypisujemy z powrotem
+                self.agent.actor_logstd.data = new_log_std
+            #######
+
             if self.hyper_params["ANNEAL_LR"]:
                 frac = 1.0 - (current_episode / max_episodes)
                 lrnow = max(frac * self.hyper_params["LEARNING_RATE"], 0.0)
@@ -380,14 +423,30 @@ class PPOAgent(Agent):
                 logprobs[step] = logprob
 
                 real_action = action.cpu().numpy().flatten()
+                #####
                 next_obs_np, reward, done = self.step(real_action)
+                #####
+                # --- GAS HEURISTIC (ASYSTENT PRZYSPIESZANIA) ---
+                # Działa przez pierwsze 500 epizodów.
+                # Celem jest pokazanie agentowi, że wysoka prędkość = duża nagroda.
+
+                # heuristic_limit = 750
+                # if current_episode < heuristic_limit:
+                #     # Szansa na wymuszenie gazu maleje liniowo od 50% do 0%
+                #     # Na początku w co 2 kroku wymuszamy pełny gaz.
+                #     gas_chance = 0.5 * (1.0 - (current_episode / heuristic_limit))
+                #
+                #     if np.random.random() < gas_chance:
+                #         # Indeks [1] to zazwyczaj gaz/hamulec w ContinuousEnv
+                #         # Wartość 1.0 oznacza: Pełny Gaz, Zero Hamulca
+                #         real_action[1] = 1.0
+                #         # -----------------------------------------------
+                #
+                # next_obs_np, reward, done = self.step(real_action)
+                #######
 
                 # reward = reward / 10.0
                 # reward = np.clip(reward, -20.0, 20.0)
-                if reward > self.maxReward:
-                    self.maxReward = reward
-                if reward < self.minReward:
-                    self.minReward = reward
 
                 rewards[step] = torch.tensor(reward).to(device).view(-1)
                 next_obs = torch.Tensor(next_obs_np).to(device).view(1, -1)
@@ -409,7 +468,8 @@ class PPOAgent(Agent):
                     current_ep_speeds = []
                     self.episode_step = 0
 
-                    is_relaunch = (current_episode % self.args.relaunch_period == 0) and (step > num_steps - 50)
+                    # is_relaunch = (current_episode % self.args.relaunch_period == 0) and (step > num_steps - 50)
+                    is_relaunch = (current_episode % self.args.relaunch_period == 0)
 
                     # Pobieramy nowy stan
                     raw_obs = self.env.reset(relaunch=is_relaunch, sampletrack=True)

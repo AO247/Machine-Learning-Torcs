@@ -42,7 +42,7 @@ class PPOActorCritic(nn.Module):
 
         # Zabezpieczenie log_std przed wybuchem (clamp)
         # Zakres -20 do 2 to bezpieczny zakres dla logarytmu odchylenia standardowego
-        action_logstd = torch.clamp(self.actor_logstd, -20, 2)
+        action_logstd = torch.clamp(self.actor_logstd, -20, 0.0)
 
         action_logstd = action_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
