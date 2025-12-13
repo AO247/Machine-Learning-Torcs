@@ -15,6 +15,9 @@ class PPOActorCritic(nn.Module):
         super(PPOActorCritic, self).__init__()
 
         hidden_size = 256
+        last_layer = layer_init(nn.Linear(hidden_size, action_dim), std=0.01)
+        with torch.no_grad():
+            last_layer.bias[1].fill_(1.0) # pełny gaz na start
 
         self.critic = nn.Sequential(
             layer_init(nn.Linear(state_dim, hidden_size)),
@@ -29,7 +32,8 @@ class PPOActorCritic(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(hidden_size, hidden_size)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_size, action_dim), std=0.01)
+            # layer_init(nn.Linear(hidden_size, action_dim), std=0.01)
+            last_layer
         )
 
         self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5) #Dodane *-0.5 żeby mniej gwałtowane zakręty był na początku !!!!

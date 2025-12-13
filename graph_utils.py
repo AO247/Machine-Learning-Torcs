@@ -260,33 +260,33 @@ if __name__ == "__main__":
 
     # --- TUTAJ WPISZ ŚCIEŻKI DO SWOICH PLIKÓW ---
 
-    path_ppo = "logs/Torcs_ppo_3bbd3b1.txt"  # <-- Twoja ścieżka PPO
+    path_ppo = "logs/Torcs_ppo_58a3b13.txt"  # <-- Twoja ścieżka PPO
     path_dqn = "logs/Torcs_dqn_3074557.txt"  # <-- Twoja ścieżka DQN
     path_sac = "logs/seven_cars/Torcs_sac-lstm_84389f4_fin.txt"  # <-- Twoja ścieżka SAC
 
     smoothing_window = 100
 
     # 1. PPO
-    if os.path.exists(path_ppo):
-        generate_ppo_plots([path_ppo], smoothing=smoothing_window)
-    else:
-        print(f"Brak pliku PPO: {path_ppo}")
+    # if os.path.exists(path_ppo):
+    #     generate_ppo_plots([path_ppo], smoothing=smoothing_window)
+    # else:
+    #     print(f"Brak pliku PPO: {path_ppo}")
 
     # 2. DQN
-    if os.path.exists(path_dqn):
-        generate_dqn_plots([path_dqn], smoothing=smoothing_window)
-    else:
-        print(f"Brak pliku DQN: {path_dqn}")
-
-    # 3. SAC-LSTM
-    if os.path.exists(path_sac):
-        generate_sac_plots([path_sac], smoothing=smoothing_window)
-    else:
-        print(f"Brak pliku SAC: {path_sac}")
-
-    # 4. PORÓWNANIE (COMPARE)
-    # Jeśli chcesz zestawić wszystkie na jednym wykresie
-    print("\n=== Generowanie wykresów PORÓWNAWCZYCH (COMPARE) ===")
+    # if os.path.exists(path_dqn):
+    #     generate_dqn_plots([path_dqn], smoothing=smoothing_window)
+    # else:
+    #     print(f"Brak pliku DQN: {path_dqn}")
+    #
+    # # 3. SAC-LSTM
+    # if os.path.exists(path_sac):
+    #     generate_sac_plots([path_sac], smoothing=smoothing_window)
+    # else:
+    #     print(f"Brak pliku SAC: {path_sac}")
+    #
+    # # 4. PORÓWNANIE (COMPARE)
+    # # Jeśli chcesz zestawić wszystkie na jednym wykresie
+    # print("\n=== Generowanie wykresów PORÓWNAWCZYCH (COMPARE) ===")
     all_files = []
     if os.path.exists(path_ppo): all_files.append(path_ppo)
     if os.path.exists(path_dqn): all_files.append(path_dqn)
@@ -295,8 +295,8 @@ if __name__ == "__main__":
     if len(all_files) > 1:
         prefix = "COMPARE_"
         # POPRAWIONE NAZWY ARGUMENTÓW PONIŻEJ (smooth_factor zamiast smoothing):
-        plot_multi_algo_single_feature(all_files, "episode", "total_score", smooth_factor=smoothing_window, prefix=prefix)
-        plot_multi_algo_single_feature(all_files, "episode", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
-        plot_multi_algo_single_feature(all_files, "episode", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files, "total_step", "total_score", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files, "total_step", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files, "total_step", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
     else:
         print("Za mało plików do porównania (potrzebne min. 2).")

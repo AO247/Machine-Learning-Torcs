@@ -32,7 +32,6 @@ class PPOAgent(Agent):
         self.hyper_params = hyper_params
         # Tensorboard writer
         self.writer = SummaryWriter(f"runs/{args.algo}_{args.seed}_{int(time.time())}")
-        self.ratioNaN = False
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
 
@@ -110,7 +109,6 @@ class PPOAgent(Agent):
 
                 if is_bad.any():
                     ratio = torch.where(is_bad, torch.tensor(1.0).to(device), ratio)
-                    self.ratioNaN = True
                 ##########
 
                 with torch.no_grad():
@@ -150,20 +148,23 @@ class PPOAgent(Agent):
 
                 newvalue = newvalue.view(-1)
                 if self.hyper_params["CLIP_VLOSS"]:
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     # Używamy smooth_l1 zamiast potęgi **2
-                    v_loss_unclipped = F.smooth_l1_loss(newvalue, b_returns[mb_inds], reduction='none', beta=1.0)
+                    # v_loss_unclipped = F.smooth_l1_loss(newvalue, b_returns[mb_inds], reduction='none', beta=1.0)
 
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
                         -self.hyper_params["CLIP_COEF"],
                         self.hyper_params["CLIP_COEF"]
                     )
-                    v_loss_clipped = F.smooth_l1_loss(v_clipped, b_returns[mb_inds], reduction='none', beta=1.0)
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    # v_loss_clipped = F.smooth_l1_loss(v_clipped, b_returns[mb_inds], reduction='none', beta=1.0)
 
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * F.smooth_l1_loss(newvalue, b_returns[mb_inds], beta=1.0)
+                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    # v_loss = 0.5 * F.smooth_l1_loss(newvalue, b_returns[mb_inds], beta=1.0)
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - self.hyper_params["ENT_COEF"] * entropy_loss + v_loss * self.hyper_params["VF_COEF"]
@@ -283,8 +284,6 @@ class PPOAgent(Agent):
                         avg_speed
                     )
                 )
-                if(self.ratioNaN):
-                    file.write("Ratio is Nan or INF")
 
         # Opcjonalnie: Zapis do Tensorboarda (już z poprawnymi nazwami PPO)
         if loss is not None:
@@ -382,19 +381,19 @@ class PPOAgent(Agent):
 
         while current_episode <= max_episodes:
 
-            ### zmieniajszenie na sztywno entropy ###
-            with torch.no_grad():
-                # Pobieramy obecny log_std (odchylenie standardowe w skali logarytmicznej)
-                current_log_std = self.agent.actor_logstd.data
-
-                # Zmniejszamy go o małą wartość (np. 0.001 co epizod)
-                # Ale nie pozwalamy spaść poniżej -3.0 (to już bardzo sztywna jazda)
-                decay_rate = 0.005
-                new_log_std = torch.clamp(current_log_std - decay_rate, min=-3.0)
-
-                # Przypisujemy z powrotem
-                self.agent.actor_logstd.data = new_log_std
-            #######
+            # ### zmieniajszenie na sztywno entropy ###
+            # with torch.no_grad():
+            #     # Pobieramy obecny log_std (odchylenie standardowe w skali logarytmicznej)
+            #     current_log_std = self.agent.actor_logstd.data
+            #
+            #     # Zmniejszamy go o małą wartość (np. 0.001 co epizod)
+            #     # Ale nie pozwalamy spaść poniżej -3.0 (to już bardzo sztywna jazda)
+            #     decay_rate = 0.005
+            #     new_log_std = torch.clamp(current_log_std - decay_rate, min=-3.0)
+            #
+            #     # Przypisujemy z powrotem
+            #     self.agent.actor_logstd.data = new_log_std
+            # #######
 
             if self.hyper_params["ANNEAL_LR"]:
                 frac = 1.0 - (current_episode / max_episodes)
@@ -445,10 +444,10 @@ class PPOAgent(Agent):
                 # next_obs_np, reward, done = self.step(real_action)
                 #######
 
-                # reward = reward / 10.0
-                # reward = np.clip(reward, -20.0, 20.0)
+                train_reward = np.clip(reward, -20.0, 20.0)
+                rewards[step] = torch.tensor(train_reward).to(device).view(-1)
 
-                rewards[step] = torch.tensor(reward).to(device).view(-1)
+                # rewards[step] = torch.tensor(reward).to(device).view(-1)
                 next_obs = torch.Tensor(next_obs_np).to(device).view(1, -1)
                 next_done = torch.Tensor([done]).to(device)
 

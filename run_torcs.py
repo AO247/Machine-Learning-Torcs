@@ -75,7 +75,7 @@ def main():
                                   state_filter=state_filter,
                                   action_filter=action_filter)
     elif args.algo == "ppo":
-        env = torcs.PPOEnv(nstack=1,
+        env = torcs.ContinuousEnv(nstack=1,
                                   reward_type=args.reward_type,
                                   track=args.track,
                                   state_filter=state_filter,

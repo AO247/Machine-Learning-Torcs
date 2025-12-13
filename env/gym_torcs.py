@@ -337,6 +337,21 @@ class TorcsEnv:
         self.client.MAX_STEPS = np.inf
 
         obs = client.S.d  # Get the current full-observation from torcs
+
+        attempts = 0
+        while 'angle' not in obs:
+            if attempts > 100:
+                # Jeśli po 100 próbach nadal brak danych, robimy twardy reset
+                print("[ERROR] TORCS not responding correctly. Force restarting...")
+                self.reset_torcs()
+                self.client = snakeoil3.Client(p=self.port, vision=False, client_mode=self.client_mode)
+                retry_count = 0
+
+            client.respond_to_server()  # Wysyłamy cokolwiek, żeby popchnąć symulację
+            client.get_servers_input()
+            obs = client.S.d
+            attempts += 1
+
         self.observation = self.make_observaton(obs)
 
         self.initial_reset = False
