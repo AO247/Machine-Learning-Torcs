@@ -260,11 +260,12 @@ if __name__ == "__main__":
 
     # --- TUTAJ WPISZ ŚCIEŻKI DO SWOICH PLIKÓW ---
 
-    path_ppo = "logs/Torcs_ppo_58a3b13.txt"  # <-- Twoja ścieżka PPO
+    path_ppo = "logs/Torcs_ppo_dc3ceb9.txt"  # <-- Twoja ścieżka PPO
     path_dqn = "logs/Torcs_dqn_3074557.txt"  # <-- Twoja ścieżka DQN
-    path_sac = "logs/seven_cars/Torcs_sac-lstm_84389f4_fin.txt"  # <-- Twoja ścieżka SAC
+    # path_sac = "logs/seven_cars/Torcs_sac-lstm_84389f4_fin.txt"  # <-- Twoja ścieżka SAC
+    path_sac = "logs/Torcs_ppo_58a3b13.txt"
 
-    smoothing_window = 100
+    smoothing_window = 500
 
     # 1. PPO
     # if os.path.exists(path_ppo):

@@ -312,36 +312,23 @@ class PPOAgent(Agent):
         }
         super().save_params(params, n_episode)
 
-
     def train(self):
-        """Main training loop."""
+        """Main training loop with Dynamic Update (Lag Prevention)."""
 
-        num_steps = self.hyper_params["NUM_STEPS"]
+        num_steps_target = self.hyper_params["NUM_STEPS"]  # Cel: min. 4096 kroków
         max_episodes = self.args.episode_num
 
-        self.hyper_params["BATCH_SIZE"] = int(num_steps)
-        self.hyper_params["MINIBATCH_SIZE"] = int(
-            self.hyper_params["BATCH_SIZE"] // self.hyper_params["NUM_MINIBATCHES"])
-
-        # 2. INTELIGENTNE WZNOWIENIE (Fix licznika)
+        # Logowanie i Wznawianie (bez zmian)
         if self.args.start_episode > 1:
             file_mode = "a"
-            # Próba odzyskania kroku z pliku logów
-            recovered_step = self._recover_total_step()
-
-            # ZABEZPIECZENIE: Jeśli odzyskany krok to 0 (błąd odczytu),
-            # a wznawiamy trening, to lepiej wziąć ostatnią znaną dobrą wartość ręcznie,
-            # ale pod żadnym pozorem nie używamy mnożenia (start_episode * num_steps)!
-            if recovered_step == 0 and self.args.start_episode > 1:
-                print("[WARNING] Could not recover step from log. Starting counter from 0 (check logs manually!)")
+            self.total_step = self._recover_total_step()
+            if self.total_step == 0 and self.args.start_episode > 1:
+                print("[WARNING] Could not recover step from log. Starting counter from 0.")
                 self.total_step = 0
-            else:
-                self.total_step = recovered_step
         else:
             file_mode = "w"
             self.total_step = 0
 
-        # 3. Otwarcie pliku
         if self.args.log:
             with open(self.log_filename, file_mode) as file:
                 if self.args.start_episode == 1:
@@ -352,113 +339,68 @@ class PPOAgent(Agent):
                         f"\n--- RESUMING TRAINING FROM EPISODE {self.args.start_episode} (Step: {self.total_step}) ---\n")
 
         self.episode_step = 0
-
-
-        self.hyper_params["BATCH_SIZE"] = int(num_steps)
-        self.hyper_params["MINIBATCH_SIZE"] = int(
-            self.hyper_params["BATCH_SIZE"] // self.hyper_params["NUM_MINIBATCHES"])
-
-        # Alokacja buforów
-        obs = torch.zeros((num_steps, self.env.state_dim)).to(device)
-        actions = torch.zeros((num_steps, self.env.action_dim)).to(device)
-        logprobs = torch.zeros((num_steps)).to(device)
-        rewards = torch.zeros((num_steps)).to(device)
-        dones = torch.zeros((num_steps)).to(device)
-        values = torch.zeros((num_steps)).to(device)
-
         current_episode = self.args.start_episode
         last_loss_tuple = None
-        global_step = 0
 
-        # Reset środowiska
+        # --- DYNAMICZNY BUFOR PAMIĘCI ---
+        # Zamiast sztywnych tensorów, używamy list, które rosną
+        mem_obs, mem_actions, mem_logprobs = [], [], []
+        mem_rewards, mem_dones, mem_values = [], [], []
+
+        # Start środowiska
         next_obs = torch.Tensor(self.env.reset(relaunch=True, sampletrack=True)).to(device).view(1, -1)
-        next_done = torch.zeros(1).to(device)
+        next_done = torch.zeros(1).to(device)  # Tensor na GPU dla spójności
 
         current_ep_return = 0
         current_ep_speeds = []
 
-        print("Starting PPO training loop...")
+        print("Starting PPO training loop (Dynamic Updates)...")
 
+        # Pętla epizodów
         while current_episode <= max_episodes:
-
-            # ### zmieniajszenie na sztywno entropy ###
-            # with torch.no_grad():
-            #     # Pobieramy obecny log_std (odchylenie standardowe w skali logarytmicznej)
-            #     current_log_std = self.agent.actor_logstd.data
-            #
-            #     # Zmniejszamy go o małą wartość (np. 0.001 co epizod)
-            #     # Ale nie pozwalamy spaść poniżej -3.0 (to już bardzo sztywna jazda)
-            #     decay_rate = 0.005
-            #     new_log_std = torch.clamp(current_log_std - decay_rate, min=-3.0)
-            #
-            #     # Przypisujemy z powrotem
-            #     self.agent.actor_logstd.data = new_log_std
-            # #######
 
             if self.hyper_params["ANNEAL_LR"]:
                 frac = 1.0 - (current_episode / max_episodes)
                 lrnow = max(frac * self.hyper_params["LEARNING_RATE"], 0.0)
                 self.optimizer.param_groups[0]["lr"] = lrnow
 
-            # --- ROLLOUT PHASE ---
-            for step in range(0, num_steps):
+            # Pętla kroków (nieskończona, przerywana przez done)
+            while True:
                 self.total_step += 1
                 self.episode_step += 1
-                global_step += 1
 
-                # --- SANITIZATION (Naprawa błędu NaN z TORCS) ---
-                if torch.isnan(next_obs).any():
-                    next_obs = torch.zeros_like(next_obs)
-                # ----------------------------------------
-
-                obs[step] = next_obs
-                dones[step] = next_done
-
+                # 1. Pobranie akcji
                 with torch.no_grad():
                     action, logprob, _, value = self.agent.get_action_and_value(next_obs)
-                    values[step] = value.flatten()
 
-                actions[step] = action
-                logprobs[step] = logprob
-
+                # 2. Wykonanie w środowisku
                 real_action = action.cpu().numpy().flatten()
-                #####
                 next_obs_np, reward, done = self.step(real_action)
-                #####
-                # --- GAS HEURISTIC (ASYSTENT PRZYSPIESZANIA) ---
-                # Działa przez pierwsze 500 epizodów.
-                # Celem jest pokazanie agentowi, że wysoka prędkość = duża nagroda.
 
-                # heuristic_limit = 750
-                # if current_episode < heuristic_limit:
-                #     # Szansa na wymuszenie gazu maleje liniowo od 50% do 0%
-                #     # Na początku w co 2 kroku wymuszamy pełny gaz.
-                #     gas_chance = 0.5 * (1.0 - (current_episode / heuristic_limit))
-                #
-                #     if np.random.random() < gas_chance:
-                #         # Indeks [1] to zazwyczaj gaz/hamulec w ContinuousEnv
-                #         # Wartość 1.0 oznacza: Pełny Gaz, Zero Hamulca
-                #         real_action[1] = 1.0
-                #         # -----------------------------------------------
-                #
-                # next_obs_np, reward, done = self.step(real_action)
-                #######
+                # 3. Zapis do bufora (Jako tensory na GPU lub CPU, zależnie od pamięci. Tu GPU dla szybkości)
+                mem_obs.append(next_obs)
+                mem_actions.append(action)
+                mem_logprobs.append(logprob)
+                mem_values.append(value.flatten())
 
+                # Fix nagrody
                 train_reward = np.clip(reward, -20.0, 20.0)
-                rewards[step] = torch.tensor(train_reward).to(device).view(-1)
+                mem_rewards.append(torch.tensor(train_reward).to(device).view(-1))
 
-                # rewards[step] = torch.tensor(reward).to(device).view(-1)
+                # Ważne: zapisujemy 'done' dla tego kroku
+                mem_dones.append(torch.tensor(done).float().to(device).view(-1))
+
+                # Aktualizacja stanu
                 next_obs = torch.Tensor(next_obs_np).to(device).view(1, -1)
-                next_done = torch.Tensor([done]).to(device)
 
+                # Logika trackera
                 current_ep_return += reward
                 current_ep_speeds.append(self.env.last_speed)
 
                 if done:
-                    # Logowanie wyników epizodu
+                    # --- KONIEC EPIZODU ---
                     self.write_log(current_episode, last_loss_tuple, current_ep_return, speed=current_ep_speeds)
 
-                    # Zapis modelu (zrobione tutaj, więc nie trzeba na dole pętli)
                     if current_episode % self.args.save_period == 0:
                         self.save_params(current_episode)
 
@@ -467,62 +409,92 @@ class PPOAgent(Agent):
                     current_ep_speeds = []
                     self.episode_step = 0
 
-                    # is_relaunch = (current_episode % self.args.relaunch_period == 0) and (step > num_steps - 50)
+                    # Sprawdzamy czy restartować grę
                     is_relaunch = (current_episode % self.args.relaunch_period == 0)
 
-                    # Pobieramy nowy stan
+                    # Reset środowiska
                     raw_obs = self.env.reset(relaunch=is_relaunch, sampletrack=True)
                     next_obs = torch.Tensor(raw_obs).to(device).view(1, -1)
 
+                    # --- DECYZJA O AKTUALIZACJI ---
+                    # Aktualizujemy tylko jeśli zebraliśmy wystarczająco dużo danych
+                    # ORAZ właśnie skończyliśmy epizod (żeby nie było laga w trakcie jazdy)
+                    if len(mem_obs) >= num_steps_target:
+                        break  # Wychodzimy z wewnętrznej pętli do sekcji UPDATE
+
+                    # Jeśli nie zebraliśmy wystarczająco dużo, gramy kolejny epizod bez update'u
                     if current_episode > max_episodes:
                         break
 
             if current_episode > max_episodes:
                 break
 
-            # --- GAE ---
-            with torch.no_grad():
-                if torch.isnan(next_obs).any():
-                    next_obs = torch.zeros_like(next_obs)
+            # --- SEKCJA UPDATE (Tylko gdy len(mem) >= 4096) ---
 
-                next_value = self.agent.get_value(next_obs).reshape(1, -1)
+            # 1. Konwersja list na tensory (Stackowanie)
+            # To tworzy nam batch o rozmiarze np. 4200 (zależnie ile trwały epizody)
+            b_obs = torch.cat(mem_obs)
+            b_actions = torch.cat(mem_actions)
+            b_logprobs = torch.cat(mem_logprobs)
+            b_rewards = torch.cat(mem_rewards)
+            b_dones = torch.cat(mem_dones)
+            b_values = torch.cat(mem_values)
+
+            # Aktualizacja rozmiaru batcha dla tej konkretnej iteracji
+            current_batch_size = b_obs.shape[0]
+            self.hyper_params["BATCH_SIZE"] = current_batch_size
+            self.hyper_params["MINIBATCH_SIZE"] = int(current_batch_size // self.hyper_params["NUM_MINIBATCHES"])
+
+            # 2. Obliczenie GAE (General Advantage Estimation)
+            # Ponieważ aktualizujemy po 'done', next_value dla ostatniego kroku to 0 (bo koniec gry)
+            with torch.no_grad():
+                next_value = 0  # Koniec epizodu, brak przyszłej nagrody
+
                 if self.hyper_params["GAE"]:
-                    advantages = torch.zeros_like(rewards).to(device)
+                    advantages = torch.zeros_like(b_rewards).to(device)
                     lastgaelam = 0
-                    for t in reversed(range(num_steps)):
-                        if t == num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
+                    # Iterujemy od tyłu po całym zebranym buforze
+                    for t in reversed(range(current_batch_size)):
+                        if t == current_batch_size - 1:
+                            nextnonterminal = 0.0  # Ostatni krok w buforze to zawsze done (bo tak wyszliśmy z pętli)
                             nextvalues = next_value
                         else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            nextvalues = values[t + 1]
-                        delta = rewards[t] + self.hyper_params["GAMMA"] * nextvalues * nextnonterminal - values[t]
+                            nextnonterminal = 1.0 - b_dones[t]
+                            nextvalues = b_values[t + 1]
+
+                        delta = b_rewards[t] + self.hyper_params["GAMMA"] * nextvalues * nextnonterminal - b_values[t]
                         advantages[t] = lastgaelam = delta + self.hyper_params["GAMMA"] * self.hyper_params[
                             "GAE_LAMBDA"] * nextnonterminal * lastgaelam
-                    returns = advantages + values
+
+                    returns = advantages + b_values
                 else:
-                    returns = torch.zeros_like(rewards).to(device)
-                    for t in reversed(range(num_steps)):
-                        if t == num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            next_return = next_value
+                    # Prosta wersja bez GAE (rzadko używana)
+                    returns = torch.zeros_like(b_rewards).to(device)
+                    for t in reversed(range(current_batch_size)):
+                        if t == current_batch_size - 1:
+                            nextnonterminal = 0.0
+                            next_return = 0.0
                         else:
-                            nextnonterminal = 1.0 - dones[t + 1]
+                            nextnonterminal = 1.0 - b_dones[t]
                             next_return = returns[t + 1]
-                        returns[t] = rewards[t] + self.hyper_params["GAMMA"] * nextnonterminal * next_return
-                    advantages = returns - values
+                        returns[t] = b_rewards[t] + self.hyper_params["GAMMA"] * nextnonterminal * next_return
+                    advantages = returns - b_values
 
-            b_obs = obs.reshape((-1, self.env.state_dim))
-            b_logprobs = logprobs.reshape(-1)
-            b_actions = actions.reshape((-1, self.env.action_dim))
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_values = values.reshape(-1)
+            # 3. Wywołanie update_model
+            # Reshape nie jest konieczny bo cat() zrobił nam już płaskie tensory [N, dim], ale dla pewności:
+            b_obs = b_obs.reshape((-1, self.env.state_dim))
+            b_actions = b_actions.reshape((-1, self.env.action_dim))
 
-            # --- UPDATE PHASE ---
-            last_loss_tuple = self.update_model(b_obs, b_actions, b_logprobs, b_returns, b_advantages, b_values)
+            last_loss_tuple = self.update_model(b_obs, b_actions, b_logprobs, b_returns=returns,
+                                                b_advantages=advantages, b_values=b_values)
 
-            # USUNIĘTO: Błędny blok z update_count
+            # 4. Wyczyszczenie bufora (Notatki spalone, idziemy na nowy wykład)
+            mem_obs.clear()
+            mem_actions.clear()
+            mem_logprobs.clear()
+            mem_rewards.clear()
+            mem_dones.clear()
+            mem_values.clear()
 
         self.env.close()
         self.writer.close()
