@@ -55,12 +55,12 @@ class DQNAgent(Agent):
     """
 
     def __init__(
-        self,
-        env: DefaultEnv,
-        args: argparse.Namespace,
-        hyper_params: dict,
-        models: tuple,
-        optim: torch.optim.Adam,
+            self,
+            env: DefaultEnv,
+            args: argparse.Namespace,
+            hyper_params: dict,
+            models: tuple,
+            optim: torch.optim.Adam,
     ):
         """Initialization.
 
@@ -118,7 +118,7 @@ class DQNAgent(Agent):
             )
 
             self.brakes = np.exp(-np.power(brake_x - self.hyper_params["BRAKE_DIST_MU"], 2.) / (
-                        2 * np.power(self.hyper_params["BRAKE_DIST_SIGMA"], 2.)))
+                    2 * np.power(self.hyper_params["BRAKE_DIST_SIGMA"], 2.)))
 
     def select_action(self, state: np.ndarray) -> np.ndarray:
         """Select an action from the input space."""
@@ -166,7 +166,7 @@ class DQNAgent(Agent):
             self.memory.add(*transition)
 
     def _get_dqn_loss(
-        self, experiences: Tuple[torch.Tensor, ...], gamma: float
+            self, experiences: Tuple[torch.Tensor, ...], gamma: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return element-wise dqn loss and Q-values."""
 
@@ -210,7 +210,7 @@ class DQNAgent(Agent):
             # to update loss and priorities
             q_values = 0.5 * (q_values + q_values_n)
             dq_loss_element_wise += (
-                dq_loss_n_element_wise * self.hyper_params["W_N_STEP"]
+                    dq_loss_n_element_wise * self.hyper_params["W_N_STEP"]
             )
             dq_loss = torch.mean(dq_loss_element_wise * weights)
 
@@ -266,16 +266,20 @@ class DQNAgent(Agent):
 
         Agent.save_params(self, params, n_episode)
 
-    def write_log(self, i: int, loss: np.ndarray, score: float, avg_time_cost: float, speed: list = None):
+    def write_log(self, i: int, loss: np.ndarray, score: float, avg_time_cost: float, speed: list = None,
+                  elapsed_time: float = 0.0):  # ZMIANA
         """Write log about loss and score"""
 
         max_speed = 0 if speed is None else (max(speed))
         avg_speed = 0 if speed is None else (sum(speed) / len(speed))
 
+        # Obliczamy FPS (orientacyjnie, kroki na sekunde treningu)
+        fps = int(self.total_step / (elapsed_time + 1e-9))
+
         print(
             "[INFO] episode %d, episode step: %d, total step: %d, total score: %f\n"
             "epsilon: %f, loss: %f, avg q-value: %f (spent %.6f sec/step)\n"
-            "track name: %s, race position: %d, max speed %.2f, avg speed %.2f\n"
+            "track name: %s, race position: %d, max speed %.2f, avg speed %.2f, time: %.1fs (%d FPS)\n"  # ZMIANA w princie
             % (
                 i,
                 self.episode_step,
@@ -288,14 +292,16 @@ class DQNAgent(Agent):
                 self.env.track_name,
                 self.env.last_obs['racePos'],
                 max_speed,
-                avg_speed
+                avg_speed,
+                elapsed_time,  # ZMIANA
+                fps  # ZMIANA
             )
         )
 
         if self.args.log:
             with open(self.log_filename, "a") as file:
                 file.write(
-                    "%d;%d;%d;%f;%f;%f;%f;%.6f;%s;%d;%.2f;%.2f\n"
+                    "%d;%d;%d;%f;%f;%f;%f;%.6f;%s;%d;%.2f;%.2f;%.2f\n"  # ZMIANA: Dodano %.2f na końcu dla czasu
                     % (
                         i,
                         self.episode_step,
@@ -308,9 +314,39 @@ class DQNAgent(Agent):
                         self.env.track_name,
                         self.env.last_obs['racePos'],
                         max_speed,
-                        avg_speed
+                        avg_speed,
+                        elapsed_time  # ZMIANA
                     )
                 )
+
+    def _recover_time_from_log(self):  # ZMIANA: Nowa metoda pomocnicza
+        """Próbuje odczytać ostatni czas z pliku logów."""
+        if not os.path.exists(self.log_filename):
+            return 0.0
+
+        try:
+            with open(self.log_filename, "r") as f:
+                lines = f.readlines()
+
+            for line in reversed(lines):
+                line = line.strip()
+                if not line or line.startswith(("Namespace", "{", "---", "[INFO]")):
+                    continue
+
+                parts = line.split(";")
+                # Stare logi maja ok. 12 kolumn, nowe 13.
+                if len(parts) >= 3:
+                    try:
+                        # Zakładamy, że czas jest ostatni
+                        last_val = parts[-1]
+                        recovered_time = float(last_val)
+                        print(f"[INFO] Recovered time from log: {recovered_time:.2f}s")
+                        return recovered_time
+                    except ValueError:
+                        pass
+            return 0.0
+        except Exception:
+            return 0.0
 
     # pylint: disable=no-self-use, unnecessary-pass
     def pretrain(self):
@@ -319,11 +355,26 @@ class DQNAgent(Agent):
 
     def train(self):
         """Train the agent."""
-        # logger
+
+        # ZMIANA: Inicjalizacja czasu
+        start_time_session = time.time()
+        time_offset = 0.0
+
+        # ZMIANA: Obsługa wznawiania i plików logów
+        if self.args.start_episode > 1:
+            file_mode = "a"
+            time_offset = self._recover_time_from_log()
+        else:
+            file_mode = "w"
+            time_offset = 0.0
+
         if self.args.log:
-            with open(self.log_filename, "w") as file:
-                file.write(str(self.args) + "\n")
-                file.write(str(self.hyper_params) + "\n")
+            with open(self.log_filename, file_mode) as file:
+                if self.args.start_episode == 1:
+                    file.write(str(self.args) + "\n")
+                    file.write(str(self.hyper_params) + "\n")
+                else:
+                    file.write(f"\n--- RESUMING TRAINING FROM EPISODE {self.args.start_episode} ---\n")
 
         # pre-training if needed
         self.pretrain()
@@ -378,9 +429,13 @@ class DQNAgent(Agent):
             t_end = time.time()
             avg_time_cost = (t_end - t_begin) / self.episode_step
 
+            # ZMIANA: Obliczenie całkowitego czasu
+            current_time_elapsed = time_offset + (time.time() - start_time_session)
+
             if losses:
                 avg_loss = np.vstack(losses).mean(axis=0)
-                self.write_log(self.i_episode, avg_loss, score, avg_time_cost, speed)
+                # ZMIANA: Przekazanie czasu
+                self.write_log(self.i_episode, avg_loss, score, avg_time_cost, speed, current_time_elapsed)
 
             if self.i_episode % self.args.save_period == 0:
                 self.save_params(self.i_episode)

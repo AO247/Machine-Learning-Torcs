@@ -263,7 +263,7 @@ if __name__ == "__main__":
     path_ppo = "logs/Torcs_ppo_dc3ceb9.txt"  # <-- Twoja ścieżka PPO
     path_dqn = "logs/Torcs_dqn_3074557.txt"  # <-- Twoja ścieżka DQN
     # path_sac = "logs/seven_cars/Torcs_sac-lstm_84389f4_fin.txt"  # <-- Twoja ścieżka SAC
-    path_sac = "logs/Torcs_ppo_58a3b13.txt"
+    path_sac = "logs/Torcs_ppo_5542983.txt"
 
     smoothing_window = 500
 

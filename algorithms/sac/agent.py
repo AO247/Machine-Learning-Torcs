@@ -9,6 +9,7 @@
 
 import argparse
 import os
+import time  # ZMIANA: Dodano import time
 from typing import Tuple
 
 import gym
@@ -27,31 +28,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class SACAgent(Agent):
-    """SAC agent interacting with environment.
-
-    Attrtibutes:
-        memory (ReplayBuffer): replay memory
-        actor (nn.Module): actor model to select actions
-        actor_target (nn.Module): target actor model to select actions
-        actor_optimizer (Optimizer): optimizer for training actor
-        critic_1 (nn.Module): critic model to predict state values
-        critic_2 (nn.Module): critic model to predict state values
-        critic_target1 (nn.Module): target critic model to predict state values
-        critic_target2 (nn.Module): target critic model to predict state values
-        critic_optimizer1 (Optimizer): optimizer for training critic_1
-        critic_optimizer2 (Optimizer): optimizer for training critic_2
-        curr_state (np.ndarray): temporary storage of the current state
-        target_entropy (int): desired entropy used for the inequality constraint
-        beta (float): beta parameter for prioritized replay buffer
-        alpha (torch.Tensor): weight for entropy
-        alpha_optimizer (Optimizer): optimizer for alpha
-        hyper_params (dict): hyper-parameters
-        total_step (int): total step numbers
-        episode_step (int): step number of the current episode
-        update_step (int): step number of updates
-        i_episode (int): current episode number
-
-    """
+    """SAC agent interacting with environment."""
 
     def __init__(
         self,
@@ -62,17 +39,6 @@ class SACAgent(Agent):
         optims: tuple,
         target_entropy: float,
     ):
-        """Initialization.
-
-        Args:
-            env (gym.Env): openAI Gym environment
-            args (argparse.Namespace): arguments including hyperparameters and training settings
-            hyper_params (dict): hyper-parameters
-            models (tuple): models including actor and critic
-            optims (tuple): optimizers for actor and critic
-            target_entropy (float): target entropy for the inequality constraint
-
-        """
         Agent.__init__(self, env, args)
 
         self.actor, self.vf, self.vf_target, self.qf_1, self.qf_2 = models
@@ -290,7 +256,7 @@ class SACAgent(Agent):
 
         Agent.save_params(self, params, n_episode)
 
-    def write_log(self, i: int, loss: np.ndarray, score: float = 0.0, policy_update_freq: int = 1, speed: list = None):
+    def write_log(self, i: int, loss: np.ndarray, score: float = 0.0, policy_update_freq: int = 1, speed: list = None, elapsed_time: float = 0.0):
         """Write log about loss and score"""
         total_loss = loss.sum()
 
@@ -298,7 +264,7 @@ class SACAgent(Agent):
         avg_speed = 0 if speed is None else (sum(speed) / len(speed))
 
         print(
-            "[INFO] episode %d, episode_step %d, total step %d, total score: %d\n"
+            "[INFO] episode %d, episode_step %d, total step %d, total score: %d, time: %.2fs\n"
             "total loss: %.3f actor_loss: %.3f qf_1_loss: %.3f qf_2_loss: %.3f "
             "vf_loss: %.3f alpha_loss: %.3f\n"
             "track name: %s, race position: %d, max speed %.2f, avg speed %.2f\n"
@@ -307,6 +273,7 @@ class SACAgent(Agent):
                 self.episode_step,
                 self.total_step,
                 score,
+                elapsed_time, # ZMIANA: Dodano czas do printa
                 total_loss,
                 loss[0] * policy_update_freq,  # actor loss
                 loss[1],  # qf_1 loss
@@ -323,7 +290,7 @@ class SACAgent(Agent):
         if self.args.log:
             with open(self.log_filename, "a") as file:
                 file.write(
-                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f\n"
+                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f;%.2f\n"
                     % (
                         i,
                         self.episode_step,
@@ -338,7 +305,8 @@ class SACAgent(Agent):
                         self.env.track_name,
                         self.env.last_obs['racePos'],
                         max_speed,
-                        avg_speed
+                        avg_speed,
+                        elapsed_time # ZMIANA: Dodano czas do loga
                     )
                 )
 
@@ -357,6 +325,8 @@ class SACAgent(Agent):
 
         # pre-training if needed
         self.pretrain()
+
+        start_time = time.time() # ZMIANA: Inicjalizacja licznika
 
         for self.i_episode in range(1, self.args.episode_num + 1):
             is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
@@ -394,12 +364,14 @@ class SACAgent(Agent):
             # logging
             if loss_episode:
                 avg_loss = np.vstack(loss_episode).mean(axis=0)
+                current_time = time.time() - start_time # ZMIANA: Obliczenie czasu
                 self.write_log(
                     self.i_episode,
                     avg_loss,
                     score,
                     self.hyper_params["POLICY_UPDATE_FREQ"],
-                    speed
+                    speed,
+                    elapsed_time=current_time # ZMIANA: Przekazanie czasu
                 )
 
             if self.i_episode % self.args.save_period == 0:
@@ -414,31 +386,7 @@ class SACAgent(Agent):
 
 
 class SACAgentLSTM(AgentLSTM):
-    """SAC agent interacting with environment.
-
-    Attrtibutes:
-        memory (ReplayBuffer): replay memory
-        actor (nn.Module): actor model to select actions
-        actor_target (nn.Module): target actor model to select actions
-        actor_optimizer (Optimizer): optimizer for training actor
-        critic_1 (nn.Module): critic model to predict state values
-        critic_2 (nn.Module): critic model to predict state values
-        critic_target1 (nn.Module): target critic model to predict state values
-        critic_target2 (nn.Module): target critic model to predict state values
-        critic_optimizer1 (Optimizer): optimizer for training critic_1
-        critic_optimizer2 (Optimizer): optimizer for training critic_2
-        curr_state (np.ndarray): temporary storage of the current state
-        target_entropy (int): desired entropy used for the inequality constraint
-        beta (float): beta parameter for prioritized replay buffer
-        alpha (torch.Tensor): weight for entropy
-        alpha_optimizer (Optimizer): optimizer for alpha
-        hyper_params (dict): hyper-parameters
-        total_step (int): total step numbers
-        episode_step (int): step number of the current episode
-        update_step (int): step number of updates
-        i_episode (int): current episode number
-
-    """
+    """SAC agent interacting with environment."""
 
     def __init__(
         self,
@@ -449,17 +397,6 @@ class SACAgentLSTM(AgentLSTM):
         optims: tuple,
         target_entropy: float,
     ):
-        """Initialization.
-
-        Args:
-            env (gym.Env): openAI Gym environment
-            args (argparse.Namespace): arguments including hyperparameters and training settings
-            hyper_params (dict): hyper-parameters
-            models (tuple): models including actor and critic
-            optims (tuple): optimizers for actor and critic
-            target_entropy (float): target entropy for the inequality constraint
-
-        """
         Agent.__init__(self, env, args)
 
         self.actor, self.vf, self.vf_target, self.qf_1, self.qf_2 = models
@@ -742,7 +679,7 @@ class SACAgentLSTM(AgentLSTM):
 
         Agent.save_params(self, params, n_episode)
 
-    def write_log(self, i: int, loss: np.ndarray, score: float = 0.0, policy_update_freq: int = 1, speed: list = None):
+    def write_log(self, i: int, loss: np.ndarray, score: float = 0.0, policy_update_freq: int = 1, speed: list = None, elapsed_time: float = 0.0):
         """Write log about loss and score"""
         total_loss = loss.sum()
 
@@ -750,7 +687,7 @@ class SACAgentLSTM(AgentLSTM):
         avg_speed = 0 if speed is None else (sum(speed) / len(speed))
 
         print(
-            "[INFO] episode %d, episode_step %d, total step %d, total score: %d\n"
+            "[INFO] episode %d, episode_step %d, total step %d, total score: %d, time: %.2fs\n"
             "total loss: %.3f actor_loss: %.3f qf_1_loss: %.3f qf_2_loss: %.3f "
             "vf_loss: %.3f alpha_loss: %.3f\n"
             "track name: %s, race position: %d, max speed %.2f, avg speed %.2f\n"
@@ -759,6 +696,7 @@ class SACAgentLSTM(AgentLSTM):
                 self.episode_step,
                 self.total_step,
                 score,
+                elapsed_time, # ZMIANA
                 total_loss,
                 loss[0] * policy_update_freq,  # actor loss
                 loss[1],  # qf_1 loss
@@ -775,7 +713,7 @@ class SACAgentLSTM(AgentLSTM):
         if self.args.log:
             with open(self.log_filename, "a") as file:
                 file.write(
-                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f\n"
+                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f;%.2f\n"
                     % (
                         i,
                         self.episode_step,
@@ -790,7 +728,8 @@ class SACAgentLSTM(AgentLSTM):
                         self.env.track_name,
                         self.env.last_obs['racePos'],
                         max_speed,
-                        avg_speed
+                        avg_speed,
+                        elapsed_time # ZMIANA
                     )
                 )
 
@@ -809,6 +748,8 @@ class SACAgentLSTM(AgentLSTM):
 
         # pre-training if needed
         self.pretrain()
+
+        start_time = time.time() # ZMIANA: Inicjalizacja czasu
 
         for self.i_episode in range(1, self.args.episode_num + 1):
             is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
@@ -848,12 +789,14 @@ class SACAgentLSTM(AgentLSTM):
             # logging
             if loss_episode:
                 avg_loss = np.vstack(loss_episode).mean(axis=0)
+                current_time = time.time() - start_time # ZMIANA: Obliczenie czasu
                 self.write_log(
                     self.i_episode,
                     avg_loss,
                     score,
                     self.hyper_params["POLICY_UPDATE_FREQ"],
-                    speed
+                    speed,
+                    elapsed_time=current_time # ZMIANA: Przekazanie czasu
                 )
 
             if self.i_episode % self.args.save_period == 0:

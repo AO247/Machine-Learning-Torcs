@@ -32,7 +32,7 @@ parser.add_argument(
 parser.add_argument(
     "--test-period", type=int, default=100, help="test period")
 parser.add_argument(
-    "--num-stack", type=int, default=4, help="number of states to stack")
+    "--num-stack", type=int, default=1, help="number of states to stack")
 parser.add_argument(
     "--reward-type", type=str, default="extra_github", help="reward type")
 parser.add_argument(
