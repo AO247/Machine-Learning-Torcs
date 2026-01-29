@@ -1,0 +1,14 @@
+--- Wyniki analizy dla Total Score ---
+Liczba przeanalizowanych epizodów: 3519
+Maksymalny wynik (Max Score): 5813.00
+Odchylenie standardowe (Standard Deviation): 1052.76
+
+--- Wyniki analizy dla Max Speed ---
+Liczba przeanalizowanych epizodów: 3519
+Najwyższa maksymalna prędkość (Max of Max Speed): 230.79
+Odchylenie standardowe (Std Dev of Max Speed): 64.35
+
+--- Wyniki analizy dla Avg Speed ---
+Liczba przeanalizowanych epizodów: 3519
+Najwyższa średnia prędkość (Max of Avg Speed): 180.74
+Odchylenie standardowe (Std Dev of Avg Speed): 56.09

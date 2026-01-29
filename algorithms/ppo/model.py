@@ -36,7 +36,7 @@ class PPOActorCritic(nn.Module):
             last_layer
         )
 
-        self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5) #Dodane *-0.5 żeby mniej gwałtowane zakręty był na początku !!!!
+        self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5) #Dodane *-0.5
 
     def get_value(self, x):
         return self.critic(x)
@@ -44,8 +44,7 @@ class PPOActorCritic(nn.Module):
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
 
-        # Zabezpieczenie log_std przed wybuchem (clamp)
-        # Zakres -20 do 2 to bezpieczny zakres dla logarytmu odchylenia standardowego
+        # Zabezpieczenie log_std
         action_logstd = torch.clamp(self.actor_logstd, -20, 0.0)
 
         action_logstd = action_logstd.expand_as(action_mean)
@@ -56,5 +55,4 @@ class PPOActorCritic(nn.Module):
         if action is None:
             action = probs.sample()
 
-        # Sumujemy log_prob po wymiarach akcji (dla Continuous Env)
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)

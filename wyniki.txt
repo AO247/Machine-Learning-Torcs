@@ -1,0 +1,47 @@
+=== PODSUMOWANIE WYNIKÓW (MAX & STD DEV) ===
+
+
+--- PPO ---
+Plik: logs/seven_cars/Torcs_ppo_f312ffd.txt
+Liczba epizodów: 5408
+------------------------------
+Total Score:
+  Max: 5479.00
+  Std Dev: 997.95
+Average Speed:
+  Max: 182.68 km/h
+  Std Dev: 35.12
+Max Speed:
+  Max: 232.28 km/h
+  Std Dev: 26.93
+------------------------------
+
+--- DQN ---
+Plik: logs/seven_cars/Torcs_dqn_f312ffd.txt
+Liczba epizodów: 3751
+------------------------------
+Total Score:
+  Max: 5687.77
+  Std Dev: 814.73
+Average Speed:
+  Max: 183.77 km/h
+  Std Dev: 42.56
+Max Speed:
+  Max: 278.43 km/h
+  Std Dev: 35.74
+------------------------------
+
+--- SAC-LSTM ---
+Plik: logs/seven_cars/Torcs_sac-lstm_f312ffd.txt
+Liczba epizodów: 3117
+------------------------------
+Total Score:
+  Max: 5237.00
+  Std Dev: 814.55
+Average Speed:
+  Max: 165.33 km/h
+  Std Dev: 37.05
+Max Speed:
+  Max: 216.94 km/h
+  Std Dev: 28.94
+------------------------------

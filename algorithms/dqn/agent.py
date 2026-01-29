@@ -267,7 +267,7 @@ class DQNAgent(Agent):
         Agent.save_params(self, params, n_episode)
 
     def write_log(self, i: int, loss: np.ndarray, score: float, avg_time_cost: float, speed: list = None,
-                  elapsed_time: float = 0.0):  # ZMIANA
+                  elapsed_time: float = 0.0):
         """Write log about loss and score"""
 
         max_speed = 0 if speed is None else (max(speed))
@@ -279,7 +279,7 @@ class DQNAgent(Agent):
         print(
             "[INFO] episode %d, episode step: %d, total step: %d, total score: %f\n"
             "epsilon: %f, loss: %f, avg q-value: %f (spent %.6f sec/step)\n"
-            "track name: %s, race position: %d, max speed %.2f, avg speed %.2f, time: %.1fs (%d FPS)\n"  # ZMIANA w princie
+            "track name: %s, race position: %d, max speed %.2f, avg speed %.2f, time: %.1fs (%d FPS)\n"
             % (
                 i,
                 self.episode_step,
@@ -293,15 +293,15 @@ class DQNAgent(Agent):
                 self.env.last_obs['racePos'],
                 max_speed,
                 avg_speed,
-                elapsed_time,  # ZMIANA
-                fps  # ZMIANA
+                elapsed_time,
+                fps
             )
         )
 
         if self.args.log:
             with open(self.log_filename, "a") as file:
                 file.write(
-                    "%d;%d;%d;%f;%f;%f;%f;%.6f;%s;%d;%.2f;%.2f;%.2f\n"  # ZMIANA: Dodano %.2f na końcu dla czasu
+                    "%d;%d;%d;%f;%f;%f;%f;%.6f;%s;%d;%.2f;%.2f;%.2f\n"
                     % (
                         i,
                         self.episode_step,
@@ -315,14 +315,14 @@ class DQNAgent(Agent):
                         self.env.last_obs['racePos'],
                         max_speed,
                         avg_speed,
-                        elapsed_time  # ZMIANA
+                        elapsed_time
                     )
                 )
 
-    def _recover_time_from_log(self):  # ZMIANA: Nowa metoda pomocnicza
-        """Próbuje odczytać ostatni czas z pliku logów."""
+    def _recover_state_from_log(self):
+        """Próbuje odczytać ostatni total_step i czas z pliku logów."""
         if not os.path.exists(self.log_filename):
-            return 0.0
+            return 0, 0.0
 
         try:
             with open(self.log_filename, "r") as f:
@@ -334,19 +334,26 @@ class DQNAgent(Agent):
                     continue
 
                 parts = line.split(";")
-                # Stare logi maja ok. 12 kolumn, nowe 13.
                 if len(parts) >= 3:
                     try:
-                        # Zakładamy, że czas jest ostatni
-                        last_val = parts[-1]
-                        recovered_time = float(last_val)
-                        print(f"[INFO] Recovered time from log: {recovered_time:.2f}s")
-                        return recovered_time
+                        # Odczyt total_step (3 kolumna)
+                        recovered_step = int(parts[2])
+
+                        # Odczyt czasu (ostatnia kolumna)
+                        recovered_time = 0.0
+                        try:
+                            last_val = parts[-1]
+                            recovered_time = float(last_val)
+                        except ValueError:
+                            pass
+
+                        print(f"[INFO] Recovered -> Step: {recovered_step}, Time: {recovered_time:.2f}s")
+                        return recovered_step, recovered_time
                     except ValueError:
                         pass
-            return 0.0
+            return 0, 0.0
         except Exception:
-            return 0.0
+            return 0, 0.0
 
     # pylint: disable=no-self-use, unnecessary-pass
     def pretrain(self):
@@ -356,16 +363,16 @@ class DQNAgent(Agent):
     def train(self):
         """Train the agent."""
 
-        # ZMIANA: Inicjalizacja czasu
         start_time_session = time.time()
         time_offset = 0.0
 
-        # ZMIANA: Obsługa wznawiania i plików logów
+        # Wczytanie z logow
         if self.args.start_episode > 1:
             file_mode = "a"
-            time_offset = self._recover_time_from_log()
+            self.total_step, time_offset = self._recover_state_from_log()
         else:
             file_mode = "w"
+            self.total_step = 0
             time_offset = 0.0
 
         if self.args.log:
@@ -429,12 +436,10 @@ class DQNAgent(Agent):
             t_end = time.time()
             avg_time_cost = (t_end - t_begin) / self.episode_step
 
-            # ZMIANA: Obliczenie całkowitego czasu
             current_time_elapsed = time_offset + (time.time() - start_time_session)
 
             if losses:
                 avg_loss = np.vstack(losses).mean(axis=0)
-                # ZMIANA: Przekazanie czasu
                 self.write_log(self.i_episode, avg_loss, score, avg_time_cost, speed, current_time_elapsed)
 
             if self.i_episode % self.args.save_period == 0:

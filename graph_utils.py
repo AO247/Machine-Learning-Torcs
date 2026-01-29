@@ -22,7 +22,8 @@ dqn_columns = {
     "track_name": 8,
     "race position": 9,
     "max_speed": 10,
-    "avg_speed": 11
+    "avg_speed": 11,
+    "time": 12
 }
 
 sac_columns = {
@@ -39,7 +40,8 @@ sac_columns = {
     "track_name": 10,
     "race_position": 11,
     "max_speed": 12,
-    "avg_speed": 13
+    "avg_speed": 13,
+    "time": 14
 }
 ppo_columns = {
     "episode": 0,
@@ -47,29 +49,17 @@ ppo_columns = {
     "total_step": 2,
     "total_score": 3,
     "total_loss": 4,
-    "actor_loss": 5,  # Policy Loss
-    "approx_kl": 6,  # W miejscu QF1
-    "clip_frac": 7,  # W miejscu QF2
-    "vf_loss": 8,  # Value Loss
-    "entropy": 9,  # W miejscu Alpha
+    "actor_loss": 5,
+    "approx_kl": 6,
+    "clip_frac": 7,
+    "vf_loss": 8,
+    "entropy": 9,
     "track_name": 10,
     "race_position": 11,
     "max_speed": 12,
-    "avg_speed": 13
+    "avg_speed": 13,
+    "time": 14
 }
-
-algo_column_list = {
-    "dqn": dqn_columns,
-    "DQN": dqn_columns,
-    "sac": sac_columns,
-    "sac-lstm": sac_columns, # SAC-LSTM ma ten sam format co SAC
-    "SAC": sac_columns,
-    "SACLSTM": sac_columns,
-    "ppo": ppo_columns,
-    "PPO": ppo_columns
-}
-
-# ------------------------------------------------------------------
 
 t3d_columns = {"episode": 0, "episode_step": 1, "total_step": 2, "total_score": 3, "total_loss": 4, "actor:loss": 5,
                "critic1_loss": 6, "critic2_loss": 7, "track_name": 8, "race_position": 9, "max_speed": 10,
@@ -84,19 +74,15 @@ algo_column_list = {
     "SACLSTM": sac_columns,
     "sac-lstm": sac_columns,
     "t3d": t3d_columns,
-    # --- DODANO PPO ---
     "ppo": ppo_columns,
     "PPO": ppo_columns
-    # ------------------
 }
 
 
 def get_column_indice(algo, column_name):
-    # Obsługa specjalnych nazw kolumn dla różnych algorytmów
     if algo == "ppo":
         if column_name == "alpha_loss": return ppo_columns["entropy"]  # Mapowanie PPO Entropy na Alpha
 
-    # Ujednolicenie nazw algorytmów (np. sac-lstm -> sac)
     if "sac" in algo.lower():
         algo_key = "sac"
     elif "dqn" in algo.lower():
@@ -151,7 +137,7 @@ def read_log_file(filename, x_indice, y_indice):
 
             if x_indice == -1 or y_indice == -1: continue
 
-            x_value = int(tokens[x_indice])
+            x_value = float(tokens[x_indice])
             y_value = float(tokens[y_indice])
             x_values.append(x_value)
             y_values.append(y_value)
@@ -165,14 +151,12 @@ def persist_figure(plt, title):
     if not os.path.exists('graphs'):
         os.makedirs('graphs')
     rnd_filename = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    # Nazwa pliku zawiera prefix algorytmu przekazany w tytule
     filename = f"graphs/{title}_{rnd_filename}.jpg"
     plt.savefig(filename, bbox_inches='tight')
     print(f"Saved graph: {filename}")
 
 
 def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100, prefix=""):
-    color_index = 0
     plt.figure(figsize=(10, 6))
 
     has_data = False
@@ -180,7 +164,7 @@ def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100,
     for file in files:
         basename = os.path.basename(file)
         try:
-            # Próba wyciągnięcia nazwy algorytmu z pliku (np. Torcs_ppo_...)
+            # Zakładamy format nazwy: Torcs_ALGO_hash.txt
             algo = basename.split("_")[1]
         except:
             algo = "unknown"
@@ -198,10 +182,13 @@ def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100,
         x_vals = x_vals[:len(y_vals)]
 
         if len(x_vals) > 0:
-            color = get_color(color_index)
-            color_index += 1
-            # Etykieta to nazwa algorytmu (lub pliku, jeśli chcesz dokładniej)
-            label_text = f"{algo.upper()}"
+            # ZMIANA: Przekazujemy filename, żeby rozróżnić serie
+            color = get_algo_color(algo, filename=file)
+
+            # Formatowanie etykiety: Dodajemy nazwę folderu/wariantu
+            variant = "OneCar" if "one_car" in file else "SevenCars"
+            label_text = f"{algo.upper()} ({variant})"
+
             plt.plot(x_vals, y_vals, color=color, label=label_text, linewidth=1.5)
             has_data = True
 
@@ -212,22 +199,18 @@ def plot_multi_algo_single_feature(files, x_column, y_column, smooth_factor=100,
 
     plt.xlabel(x_column)
     plt.ylabel(y_column)
-    plt.title(f"{prefix}{y_column} vs {x_column} (Smooth: {smooth_factor})")
+    # plt.title(f"{prefix}{y_column} vs {x_column} (Smooth: {smooth_factor})")
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
 
-    # Zapis z prefixem w nazwie pliku
     persist_figure(plt, f"{prefix}{y_column}_vs_{x_column}")
-    # plt.show() # Odkomentuj, jeśli chcesz widzieć okna
     plt.close()
 
 
-# --- FUNKCJE DEDYKOWANE ---
 
 def generate_ppo_plots(log_files, smoothing=100):
     print("\n=== Generowanie wykresów dla PPO ===")
     prefix = "PPO_"
-    # Standardowe metryki
     plot_multi_algo_single_feature(log_files, "episode", "total_score", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "avg_speed", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "max_speed", smoothing, prefix)
@@ -237,7 +220,6 @@ def generate_ppo_plots(log_files, smoothing=100):
 def generate_dqn_plots(log_files, smoothing=100):
     print("\n=== Generowanie wykresów dla DQN ===")
     prefix = "DQN_"
-    # DQN ma epsilon
     plot_multi_algo_single_feature(log_files, "episode", "total_score", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "avg_speed", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "max_speed", smoothing, prefix)
@@ -247,7 +229,6 @@ def generate_dqn_plots(log_files, smoothing=100):
 def generate_sac_plots(log_files, smoothing=100):
     print("\n=== Generowanie wykresów dla SAC-LSTM ===")
     prefix = "SAC-LSTM_"
-    # SAC ma alpha_loss
     plot_multi_algo_single_feature(log_files, "episode", "total_score", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "avg_speed", smoothing, prefix)
     plot_multi_algo_single_feature(log_files, "episode", "max_speed", smoothing, prefix)
@@ -255,49 +236,220 @@ def generate_sac_plots(log_files, smoothing=100):
     plot_multi_algo_single_feature(log_files, "episode", "total_loss", smoothing, prefix)
 
 
+def get_algo_color(algo_name, filename=""):
+    """
+    Przypisuje kolor na podstawie algorytmu i nazwy pliku.
+    Jeśli to ten sam algorytm, ale inny plik (np. dqn2), daje inny kolor.
+    """
+    name = algo_name.lower()
+
+    # Sprawdzenie konkretnych plików (Hardcoded dla Twojego przypadku)
+    if "one_car" in filename:  # Wykrywamy, że to plik z folderu 'one_car'
+        return "red"  # Druga seria będzie zawsze czerwona
+
+    # Standardowe kolory dla pierwszej serii ('seven_cars')
+    if "ppo" in name:
+        return "green"
+    elif "dqn" in name:
+        return "blue"
+    elif "sac" in name:
+        return "orange"
+    else:
+        return "black"
 # --- MAIN ---
+
+LOG_FILE = "logs/seven_cars/Torcs_sac-lstm_f312ffd.txt"
+OUTPUT_FILE = "sac_track_stats.csv"
+
+# Indeksy kolumn dla SAC-LSTM (zgodnie z Twoimi logami)
+# 0:Episode; 1:Step; 2:TotalStep; 3:Score; ... 10:Track; 11:Pos; 12:MaxSpd; 13:AvgSpd; 14:Time
+IDX_SCORE = 3
+IDX_TRACK = 10
+IDX_MAX_SPD = 12
+IDX_AVG_SPD = 13
+
+
+def generate_excel_table():
+    if not os.path.exists(LOG_FILE):
+        print(f"[ERROR] Nie znaleziono pliku: {LOG_FILE}")
+        return
+
+    # Słownik do przechowywania danych: { 'nazwa_toru': { 'scores': [], 'max_speeds': [], 'avg_speeds': [] } }
+    tracks_data = {}
+
+    print(f"Przetwarzanie pliku: {LOG_FILE}...")
+
+    try:
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+
+        for line in lines:
+            line = line.strip()
+            # Pomijamy nagłówki i puste linie
+            if not line or line.startswith(("Namespace", "{", "---", "[INFO]", "Ratio")):
+                continue
+
+            parts = line.split(";")
+
+            # Sprawdzamy czy linia ma wystarczająco dużo danych
+            if len(parts) <= 13:
+                continue
+
+            try:
+                # Pobieramy dane
+                track_name = parts[IDX_TRACK].strip()
+                score = float(parts[IDX_SCORE])
+                max_spd = float(parts[IDX_MAX_SPD])
+                avg_spd = float(parts[IDX_AVG_SPD])
+
+                # Inicjalizacja listy dla nowego toru
+                if track_name not in tracks_data:
+                    tracks_data[track_name] = {
+                        'scores': [],
+                        'max_speeds': [],
+                        'avg_speeds': []
+                    }
+
+                # Dodawanie danych
+                tracks_data[track_name]['scores'].append(score)
+                tracks_data[track_name]['max_speeds'].append(max_spd)
+                tracks_data[track_name]['avg_speeds'].append(avg_spd)
+
+            except ValueError:
+                continue
+
+        # --- GENEROWANIE TABELI ---
+        output_lines = []
+        # Nagłówek dla Excela (średnik jako separator jest bezpieczny dla polskich ustawień Excela)
+        output_lines.append("Track;Max Score;Avg Score;Max Speed;Avg Speed")
+
+        # Sortujemy tory alfabetycznie
+        sorted_tracks = sorted(tracks_data.keys())
+
+        print("\n--- PODGLĄD WYNIKÓW (SAC-LSTM) ---")
+        print(f"{'Track':<15} | {'Max Score':<10} | {'Avg Score':<10} | {'Max Speed':<10} | {'Avg Speed':<10}")
+        print("-" * 70)
+
+        for track in sorted_tracks:
+            data = tracks_data[track]
+
+            # Obliczenia
+            max_score = np.max(data['scores'])
+            avg_score = np.mean(data['scores'])
+
+            # Dla Max Speed bierzemy maksymalną osiągniętą prędkość na danym torze (peak)
+            max_speed_val = np.max(data['max_speeds'])
+
+            # Dla Avg Speed bierzemy średnią ze średnich prędkości (tempo wyścigowe)
+            avg_speed_val = np.mean(data['avg_speeds'])
+
+            # Formatowanie do pliku (zminiamy kropkę na przecinek, jeśli Twój Excel tego wymaga,
+            # ale standardowo w CSV programistycznym używa się kropki. Tu zostawiam kropkę).
+            line_str = f"{track};{max_score:.2f};{avg_score:.2f};{max_speed_val:.2f};{avg_speed_val:.2f}"
+            output_lines.append(line_str)
+
+            # Podgląd w konsoli
+            print(
+                f"{track:<15} | {max_score:<10.2f} | {avg_score:<10.2f} | {max_speed_val:<10.2f} | {avg_speed_val:<10.2f}")
+
+        # Zapis do pliku
+        with open(OUTPUT_FILE, "w") as f:
+            f.writelines([line + "\n" for line in output_lines])
+
+        print("-" * 70)
+        print(f"Gotowe! Plik '{OUTPUT_FILE}' został utworzony.")
+        print("Możesz go otworzyć w Excelu (Dane -> Z tekstu/CSV -> Separator: średnik).")
+
+    except Exception as e:
+        print(f"[ERROR] Coś poszło nie tak: {e}")
+
+
 if __name__ == "__main__":
+    # generate_excel_table()
 
-    # --- TUTAJ WPISZ ŚCIEŻKI DO SWOICH PLIKÓW ---
+    path_ppo = "logs/seven_cars/Torcs_ppo_f312ffd.txt"
+    path_ppo2 = "logs/one_car/Torcs_ppo_5542983.txt"
+    path_dqn = "logs/seven_cars/Torcs_dqn_f312ffd.txt"
+    path_dqn2 = "logs/one_car/Torcs_dqn_4b15edf.txt"
+    path_sac = "logs/seven_cars/Torcs_sac-lstm_f312ffd.txt"
+    #
+    smoothing_window = 200
 
-    path_ppo = "logs/Torcs_ppo_dc3ceb9.txt"  # <-- Twoja ścieżka PPO
-    path_dqn = "logs/Torcs_dqn_3074557.txt"  # <-- Twoja ścieżka DQN
-    # path_sac = "logs/seven_cars/Torcs_sac-lstm_84389f4_fin.txt"  # <-- Twoja ścieżka SAC
-    path_sac = "logs/Torcs_ppo_5542983.txt"
-
-    smoothing_window = 500
-
-    # 1. PPO
+    # # 1. PPO
     # if os.path.exists(path_ppo):
     #     generate_ppo_plots([path_ppo], smoothing=smoothing_window)
     # else:
     #     print(f"Brak pliku PPO: {path_ppo}")
-
-    # 2. DQN
+    #
+    # # 2. DQN
     # if os.path.exists(path_dqn):
     #     generate_dqn_plots([path_dqn], smoothing=smoothing_window)
     # else:
     #     print(f"Brak pliku DQN: {path_dqn}")
     #
-    # # 3. SAC-LSTM
+    # # # 3. SAC-LSTM
     # if os.path.exists(path_sac):
     #     generate_sac_plots([path_sac], smoothing=smoothing_window)
     # else:
     #     print(f"Brak pliku SAC: {path_sac}")
     #
-    # # 4. PORÓWNANIE (COMPARE)
-    # # Jeśli chcesz zestawić wszystkie na jednym wykresie
-    # print("\n=== Generowanie wykresów PORÓWNAWCZYCH (COMPARE) ===")
-    all_files = []
-    if os.path.exists(path_ppo): all_files.append(path_ppo)
-    if os.path.exists(path_dqn): all_files.append(path_dqn)
-    if os.path.exists(path_sac): all_files.append(path_sac)
+    # # # 4. PORÓWNANIE
+    #
+    # smoothing_window = 400
+    #
+    # all_files = []
+    # if os.path.exists(path_ppo): all_files.append(path_ppo)
+    # if os.path.exists(path_dqn): all_files.append(path_dqn)
+    # if os.path.exists(path_sac): all_files.append(path_sac)
+    #
+    # if len(all_files) > 1:
+    #     prefix = "COMPARE_"
+    #     plot_multi_algo_single_feature(all_files, "episode", "total_score", smooth_factor=smoothing_window, prefix=prefix)
+    #     plot_multi_algo_single_feature(all_files, "episode", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
+    #     plot_multi_algo_single_feature(all_files, "episode", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
+    # else:
+    #     print("Za mało plików do porównania (potrzebne min. 2).")
+    #
+    # if len(all_files) > 1:
+    #     prefix = "COMPARE_"
+    #     plot_multi_algo_single_feature(all_files, "time", "total_score", smooth_factor=smoothing_window,
+    #                                    prefix=prefix)
+    #     plot_multi_algo_single_feature(all_files, "time", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
+    #     plot_multi_algo_single_feature(all_files, "time", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
+    # else:
+    #     print("Za mało plików do porównania (potrzebne min. 2).")
+    # all_files2 = []
+    # if os.path.exists(path_dqn): all_files2.append(path_dqn)
+    # if os.path.exists(path_sac): all_files2.append(path_sac)
+    # if len(all_files2) > 1:
+    #     prefix = "COMPARE_"
+    #     plot_multi_algo_single_feature(all_files2, "episode", "total_score", smooth_factor=smoothing_window, prefix=prefix)
+    # else:
+    #     print("Za mało plików do porównania (potrzebne min. 2).")
 
-    if len(all_files) > 1:
+    all_files_dqn = []
+    if os.path.exists(path_dqn): all_files_dqn.append(path_dqn)
+    if os.path.exists(path_dqn2): all_files_dqn.append(path_dqn2)
+
+    if len(all_files_dqn) > 1:
         prefix = "COMPARE_"
-        # POPRAWIONE NAZWY ARGUMENTÓW PONIŻEJ (smooth_factor zamiast smoothing):
-        plot_multi_algo_single_feature(all_files, "total_step", "total_score", smooth_factor=smoothing_window, prefix=prefix)
-        plot_multi_algo_single_feature(all_files, "total_step", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
-        plot_multi_algo_single_feature(all_files, "total_step", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files_dqn, "episode", "total_score", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files_dqn, "episode", "avg_speed", smooth_factor=smoothing_window, prefix=prefix)
+        plot_multi_algo_single_feature(all_files_dqn, "episode", "max_speed", smooth_factor=smoothing_window, prefix=prefix)
+    else:
+        print("Za mało plików do porównania (potrzebne min. 2).")
+
+    all_files_ppo = []
+    if os.path.exists(path_ppo): all_files_ppo.append(path_ppo)
+    if os.path.exists(path_ppo2): all_files_ppo.append(path_ppo2)
+
+    if len(all_files_ppo) > 1:
+        prefix = "COMPARE_"
+        plot_multi_algo_single_feature(all_files_ppo, "episode", "total_score", smooth_factor=smoothing_window,
+                                       prefix=prefix)
+        plot_multi_algo_single_feature(all_files_ppo, "episode", "avg_speed", smooth_factor=smoothing_window,
+                                       prefix=prefix)
+        plot_multi_algo_single_feature(all_files_ppo, "episode", "max_speed", smooth_factor=smoothing_window,
+                                       prefix=prefix)
     else:
         print("Za mało plików do porównania (potrzebne min. 2).")

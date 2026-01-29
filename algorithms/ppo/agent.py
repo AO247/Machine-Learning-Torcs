@@ -30,7 +30,6 @@ class PPOAgent(Agent):
         self.agent = model
         self.optimizer = optimizer
         self.hyper_params = hyper_params
-        # Tensorboard writer
         self.writer = SummaryWriter(f"runs/{args.algo}_{args.seed}_{int(time.time())}")
         if args.load_from is not None and os.path.exists(args.load_from):
             self.load_params(args.load_from)
@@ -40,21 +39,15 @@ class PPOAgent(Agent):
         state_tensor = torch.FloatTensor(state.reshape(1, -1)).to(device)
 
         with torch.no_grad():
-            if self.args.test:
-                # --- TRYB TESTOWY: DETERMINISTYCZNY ---
-                # Nie losujemy! Bierzemy "średnią" z rozkładu (to, co sieć uważa za najlepsze)
-                # Musimy odwołać się bezpośrednio do sieci actor_mean z modelu
+            if self.args.test: #TEST
                 action = self.agent.actor_mean(state_tensor)
-            else:
-                # --- TRYB TRENINGOWY: STOCHASTYCZNY ---
-                # Losujemy z rozkładu (eksploracja)
+            else: #TRENING
                 action, _, _, _ = self.agent.get_action_and_value(state_tensor)
 
         return action.cpu().numpy().flatten()
 
     def step(self, action: Union[torch.Tensor, np.ndarray]) -> Tuple[np.ndarray, np.float64, bool]:
-        """Take an action and return the response of the env."""
-        # Jeśli akcja jest tensorem, zamieniamy na numpy
+
         if isinstance(action, torch.Tensor):
             action = action.cpu().numpy().flatten()
 
@@ -62,7 +55,6 @@ class PPOAgent(Agent):
         return next_state, reward, done
 
     def update_model(self, b_obs, b_actions, b_logprobs, b_returns, b_advantages, b_values) -> Tuple[float, ...]:
-        """Train the model using collected batch with NaN safety checks."""
 
         batch_size = self.hyper_params["BATCH_SIZE"]
         minibatch_size = self.hyper_params["MINIBATCH_SIZE"]
@@ -75,7 +67,7 @@ class PPOAgent(Agent):
         avg_v_loss = 0
         avg_entropy_loss = 0
         avg_approx_kl = 0
-        valid_updates = 0  # Licznik udanych aktualizacji
+        valid_updates = 0
 
         # Optimization Loop
         for epoch in range(self.hyper_params["UPDATE_EPOCHS"]):
@@ -87,7 +79,6 @@ class PPOAgent(Agent):
                 # --- SAFETY 1: Sanityzacja wejścia (b_obs) ---
                 mb_obs = b_obs[mb_inds]
                 if torch.isnan(mb_obs).any():
-                    # print("WARNING: NaN detected in batch observations! Replacing with zeros.")
                     mb_obs = torch.where(torch.isnan(mb_obs), torch.zeros_like(mb_obs), mb_obs)
 
                 # --- SAFETY 2: Sanityzacja akcji (b_actions) ---
@@ -103,7 +94,7 @@ class PPOAgent(Agent):
                 ratio = logratio.exp()
 
 
-                ### potencjalna naprawa NaN ###
+                ### gdy wystapi NaN ###
                 with torch.no_grad():
                     is_bad = torch.isinf(ratio) | torch.isnan(ratio)
 
@@ -131,26 +122,10 @@ class PPOAgent(Agent):
                                                         1 + self.hyper_params["CLIP_COEF"])
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Value loss
-                # newvalue = newvalue.view(-1)
-                # if self.hyper_params["CLIP_VLOSS"]:
-                #     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                #     v_clipped = b_values[mb_inds] + torch.clamp(
-                #         newvalue - b_values[mb_inds],
-                #         -self.hyper_params["CLIP_COEF"],
-                #         self.hyper_params["CLIP_COEF"]
-                #     )
-                #     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                #     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                #     v_loss = 0.5 * v_loss_max.mean()
-                # else:
-                #     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 newvalue = newvalue.view(-1)
                 if self.hyper_params["CLIP_VLOSS"]:
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    # Używamy smooth_l1 zamiast potęgi **2
-                    # v_loss_unclipped = F.smooth_l1_loss(newvalue, b_returns[mb_inds], reduction='none', beta=1.0)
 
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
@@ -158,28 +133,17 @@ class PPOAgent(Agent):
                         self.hyper_params["CLIP_COEF"]
                     )
                     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    # v_loss_clipped = F.smooth_l1_loss(v_clipped, b_returns[mb_inds], reduction='none', beta=1.0)
 
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
-                    # v_loss = 0.5 * F.smooth_l1_loss(newvalue, b_returns[mb_inds], beta=1.0)
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - self.hyper_params["ENT_COEF"] * entropy_loss + v_loss * self.hyper_params["VF_COEF"]
 
                 # --- SAFETY 4: Krytyczne zabezpieczenie przed zepsuciem modelu ---
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"\nCRITICAL WARNING: Loss became {loss.item()}!")
-                    print(
-                        f"DEBUG PARTS -> PG_Loss: {pg_loss.item()}, V_Loss: {v_loss.item()}, Entropy: {entropy_loss.item()}")
-
-                    # Sprawdźmy wejścia
-                    print(f"DEBUG INPUTS -> Max Obs: {mb_obs.max().item()}, Min Obs: {mb_obs.min().item()}")
-                    print(f"DEBUG ADVANTAGES -> Max: {mb_advantages.max().item()}, Min: {mb_advantages.min().item()}")
-
-                    print("Skipping optimization step to save the model.\n")
                     continue
 
                 self.optimizer.zero_grad()
@@ -198,7 +162,6 @@ class PPOAgent(Agent):
                 if approx_kl > self.hyper_params["TARGET_KL"]:
                     break
 
-        # Obliczanie średnich strat (zabezpieczenie przez dzieleniem przez 0)
         if valid_updates == 0:
             return 0.0, 0.0, 0.0, 0.0, 0.0
 
@@ -234,7 +197,7 @@ class PPOAgent(Agent):
         if self.args.log:
             with open(self.log_filename, "a") as file:
                 file.write(
-                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f;%.2f\n" # ZMIANA: Dodano %.2f na końcu
+                    "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%s;%d;%.2f;%.2f;%.2f\n"
                     % (
                         i,
                         self.episode_step,
@@ -250,7 +213,7 @@ class PPOAgent(Agent):
                         self.env.last_obs['racePos'],
                         max_speed,
                         avg_speed,
-                        elapsed_time # ZMIANA: Przekazanie czasu do pliku
+                        elapsed_time
                     )
                 )
 
@@ -377,7 +340,7 @@ class PPOAgent(Agent):
                     # Sprawdzamy czy mamy dość danych do update'u
                     if len(mem_obs) >= num_steps_target:
                         perform_update = True
-                        break  # Wychodzimy z pętli kroków, ALE NIE RESETUJEMY JESZCZE GRY!
+                        break  # wyjscie bez resetu
                     else:
                         # Jeśli nie robimy update'u, to resetujemy grę natychmiast i gramy dalej
                         is_relaunch = (current_episode % self.args.relaunch_period == 0)
@@ -390,7 +353,7 @@ class PPOAgent(Agent):
             if current_episode > max_episodes:
                 break
 
-            # --- SEKCJA UPDATE (Tylko gdy flaga perform_update jest True) ---
+            # --- SEKCJA UPDATE---
             if perform_update:
 
                 # 1. Przygotowanie danych
@@ -407,7 +370,7 @@ class PPOAgent(Agent):
 
                 # 2. Obliczenie GAE
                 with torch.no_grad():
-                    next_value = 0  # Bo update jest zawsze po done
+                    next_value = 0
                     if self.hyper_params["GAE"]:
                         advantages = torch.zeros_like(b_rewards).to(device)
                         lastgaelam = 0
@@ -435,9 +398,7 @@ class PPOAgent(Agent):
                             returns[t] = b_rewards[t] + self.hyper_params["GAMMA"] * nextnonterminal * next_return
                         advantages = returns - b_values
 
-                # 3. Właściwa aktualizacja (Tu następuje "Lag")
-                # Ponieważ wyszliśmy z pętli kroków po 'done', gra i tak czeka na reset.
-                # Ten czas obliczeń nie wpłynie na jazdę.
+                # 3. Aktaulizacja polityki
 
                 b_obs = b_obs.reshape((-1, self.env.state_dim))
                 b_actions = b_actions.reshape((-1, self.env.action_dim))
@@ -453,11 +414,8 @@ class PPOAgent(Agent):
                 mem_dones.clear()
                 mem_values.clear()
 
-                # --- RESET PO UPDATE (Teraz jest bezpiecznie) ---
-                # Dopiero teraz, po zakończeniu mielenia cyfr, resetujemy grę.
-                # Dzięki temu gra startuje i od razu dostaje sterowanie, bez laga.
+                # Reset po aktualizacji
 
-                # Opcjonalnie: Po ciężkich obliczeniach można wymusić relaunch dla świeżości procesu
                 is_relaunch = (current_episode % self.args.relaunch_period == 0)
 
                 raw_obs = self.env.reset(relaunch=is_relaunch, sampletrack=True)
@@ -486,18 +444,16 @@ class PPOAgent(Agent):
                 if len(parts) >= 3:
                     recovered_step = int(parts[2])
 
-                    # ZMIANA: Próba odczytu czasu z ostatniej kolumny
                     recovered_time = 0.0
                     try:
-                        # Sprawdzamy czy ostatni element to liczba (czas)
                         last_val = parts[-1]
                         if "Ratio" not in last_val:
                             recovered_time = float(last_val)
                     except ValueError:
-                        pass  # Stare logi nie mają czasu
+                        pass
 
                     print(f"[INFO] Recovered total_step: {recovered_step}, time: {recovered_time}")
-                    return recovered_step, recovered_time  # ZMIANA: Zwraca krotkę
+                    return recovered_step, recovered_time
 
             return 0, 0.0
 

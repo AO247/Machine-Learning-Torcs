@@ -29,6 +29,8 @@ class DefaultEnv(TorcsEnv):
         self.nstack = nstack
         self.stack_buffer = deque(maxlen=nstack)
 
+        self.last_speed = 0.0 # dodatek minimalna predkosc
+
         self.state_filter = state_filter
         if state_filter is not None:
             self.state_filter = np.tile(np.array(state_filter).reshape(-1, 1), self.observation_space.shape[0])
@@ -63,6 +65,7 @@ class DefaultEnv(TorcsEnv):
 
     def reset(self, relaunch=False, sampletrack=False, render=False):
         state = super().reset(relaunch, sampletrack, render)
+        self.last_speed = 0.0 # dodatek minimalna predkosc
         if self.nstack > 1:
             [self.stack_buffer.append(state) for i in range(self.nstack)]
             state = np.asarray(self.stack_buffer).flatten()
@@ -119,33 +122,6 @@ class ContinuousEnv(DefaultEnv):
     def try_brake(self, u):
         u[1] = torch.rand(1) - 1
         return u
-
-class PPOEnv(DefaultEnv):
-    def __init__(self,
-                 port=3101,
-                 nstack=1,
-                 reward_type='extra_github',
-                 track='none',
-                 state_filter=None,
-                 action_filter=None,
-                 client_mode=False):
-        super().__init__(port, nstack, reward_type, track, state_filter, action_filter, client_mode)
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,))
-
-    def preprocess_action(self, u):
-        act = np.zeros(3)
-
-        act[STEER] = u[0]
-
-        if u[1] > 0:
-            act[ACCEL] = np.clip(u[1] * 1.8, 0.0, 1.0)
-            act[BRAKE] = -1
-        else:
-            act[ACCEL] = 0
-            act[BRAKE] = (abs(u[1]) * 2) - 1
-
-        return super().preprocess_action(act)
-
 
 class DiscretizedEnv(DefaultEnv):
     def __init__(self,

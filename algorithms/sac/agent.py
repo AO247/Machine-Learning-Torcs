@@ -9,7 +9,7 @@
 
 import argparse
 import os
-import time  # ZMIANA: Dodano import time
+import time
 from typing import Tuple
 
 import gym
@@ -273,7 +273,7 @@ class SACAgent(Agent):
                 self.episode_step,
                 self.total_step,
                 score,
-                elapsed_time, # ZMIANA: Dodano czas do printa
+                elapsed_time,
                 total_loss,
                 loss[0] * policy_update_freq,  # actor loss
                 loss[1],  # qf_1 loss
@@ -306,7 +306,7 @@ class SACAgent(Agent):
                         self.env.last_obs['racePos'],
                         max_speed,
                         avg_speed,
-                        elapsed_time # ZMIANA: Dodano czas do loga
+                        elapsed_time
                     )
                 )
 
@@ -326,7 +326,7 @@ class SACAgent(Agent):
         # pre-training if needed
         self.pretrain()
 
-        start_time = time.time() # ZMIANA: Inicjalizacja licznika
+        start_time = time.time()
 
         for self.i_episode in range(1, self.args.episode_num + 1):
             is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
@@ -364,14 +364,14 @@ class SACAgent(Agent):
             # logging
             if loss_episode:
                 avg_loss = np.vstack(loss_episode).mean(axis=0)
-                current_time = time.time() - start_time # ZMIANA: Obliczenie czasu
+                current_time = time.time() - start_time
                 self.write_log(
                     self.i_episode,
                     avg_loss,
                     score,
                     self.hyper_params["POLICY_UPDATE_FREQ"],
                     speed,
-                    elapsed_time=current_time # ZMIANA: Przekazanie czasu
+                    elapsed_time=current_time
                 )
 
             if self.i_episode % self.args.save_period == 0:
@@ -696,7 +696,7 @@ class SACAgentLSTM(AgentLSTM):
                 self.episode_step,
                 self.total_step,
                 score,
-                elapsed_time, # ZMIANA
+                elapsed_time,
                 total_loss,
                 loss[0] * policy_update_freq,  # actor loss
                 loss[1],  # qf_1 loss
@@ -729,7 +729,7 @@ class SACAgentLSTM(AgentLSTM):
                         self.env.last_obs['racePos'],
                         max_speed,
                         avg_speed,
-                        elapsed_time # ZMIANA
+                        elapsed_time
                     )
                 )
 
@@ -740,20 +740,42 @@ class SACAgentLSTM(AgentLSTM):
 
     def train(self):
         """Train the agent."""
+        start_time_session = time.time()
+        time_offset = 0.0
         # logger
-        if self.args.log:
-            with open(self.log_filename, "w") as file:
-                file.write(str(self.args) + "\n")
-                file.write(str(self.hyper_params) + "\n")
 
+        if self.args.start_episode > 1:
+            file_mode = "a"  # Append mode (dopisujemy)
+            self.total_step, time_offset = self._recover_state_from_log()
+
+            if self.total_step == 0:
+                print("[WARNING] Could not recover state from log. Starting total_step from 0.")
+        else:
+            file_mode = "w"  # Write mode (nowy plik)
+            self.total_step = 0
+            time_offset = 0.0
+
+        if self.args.log:
+            with open(self.log_filename, file_mode) as file:
+                if self.args.start_episode == 1:
+                    # Tylko dla nowego treningu piszemy nagłówki
+                    file.write(str(self.args) + "\n")
+                    file.write(str(self.hyper_params) + "\n")
+                else:
+                    # Separator przy wznowieniu
+                    file.write(
+                        f"\n--- RESUMING TRAINING FROM EPISODE {self.args.start_episode} (Step: {self.total_step}, Time: {time_offset:.2f}s) ---\n")
         # pre-training if needed
         self.pretrain()
 
-        start_time = time.time() # ZMIANA: Inicjalizacja czasu
+        start_time = time.time()
 
-        for self.i_episode in range(1, self.args.episode_num + 1):
+        for self.i_episode in range(self.args.start_episode, self.args.episode_num + 1):
             is_relaunch = (self.i_episode - 1) % self.args.relaunch_period == 0
             state = self.env.reset(relaunch=is_relaunch, render=False, sampletrack=True)
+
+            if np.isnan(state).any():
+                state = np.zeros_like(state)
 
             hx, cx = self.actor.init_lstm_states(1)
 
@@ -771,14 +793,20 @@ class SACAgentLSTM(AgentLSTM):
                         if np.random.random() < self.brakes[self.i_episode] * self.hyper_params["BRAKE_FACTOR"]:
                             action = self.env.try_brake(action)
 
+
                 next_state, reward, done = self.step(action)
+
+                if np.isnan(next_state).any():
+                    next_state = np.zeros_like(next_state)
+
                 self.total_step += 1
                 self.episode_step += 1
 
                 state = next_state
                 score += reward
 
-                speed.append(self.env.last_speed)
+                spd = self.env.last_speed if hasattr(self.env, 'last_speed') else 0.0
+                speed.append(spd)
 
                 # training
                 if len(self.memory) >= self.hyper_params["BATCH_SIZE"] and len(self.memory) >= self.hyper_params["PREFILL_BUFFER"]:
@@ -789,14 +817,15 @@ class SACAgentLSTM(AgentLSTM):
             # logging
             if loss_episode:
                 avg_loss = np.vstack(loss_episode).mean(axis=0)
-                current_time = time.time() - start_time # ZMIANA: Obliczenie czasu
+                current_time_elapsed = time_offset + (time.time() - start_time_session)
+
                 self.write_log(
                     self.i_episode,
                     avg_loss,
                     score,
                     self.hyper_params["POLICY_UPDATE_FREQ"],
                     speed,
-                    elapsed_time=current_time # ZMIANA: Przekazanie czasu
+                    elapsed_time=current_time_elapsed # Przekazujemy czas
                 )
 
             if self.i_episode % self.args.save_period == 0:
@@ -808,3 +837,41 @@ class SACAgentLSTM(AgentLSTM):
         self.env.close()
         self.save_params(self.i_episode)
         self.interim_test()
+
+    def _recover_state_from_log(self):
+            """Próbuje odczytać ostatni total_step oraz czas z pliku logów."""
+            if not os.path.exists(self.log_filename):
+                return 0, 0.0
+
+            try:
+                with open(self.log_filename, "r") as f:
+                    lines = f.readlines()
+
+                for line in reversed(lines):
+                    line = line.strip()
+                    # Pomijamy nagłówki i puste linie
+                    if not line or line.startswith(("Namespace", "{", "---", "[INFO]", "Ratio")):
+                        continue
+
+                    parts = line.split(";")
+                    # SAC ma dużo kolumn, sprawdzamy czy linia wygląda na dane
+                    if len(parts) >= 3:
+                        try:
+                            recovered_step = int(parts[2])  # 3. kolumna to total_step
+
+                            # Próba odczytania czasu z ostatniej kolumny
+                            recovered_time = 0.0
+                            last_val = parts[-1]
+                            # Zabezpieczenie, czy ostatnia wartość to liczba
+                            recovered_time = float(last_val)
+
+                            print(f"[INFO] Recovered from log -> Step: {recovered_step}, Time: {recovered_time:.2f}s")
+                            return recovered_step, recovered_time
+                        except ValueError:
+                            continue  # Jeśli linia uszkodzona, szukamy wyżej
+
+                return 0, 0.0
+
+            except Exception as e:
+                print(f"[WARNING] Failed to recover state from logs: {e}. Starting from 0.")
+                return 0, 0.0
